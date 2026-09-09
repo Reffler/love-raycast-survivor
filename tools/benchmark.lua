@@ -4,9 +4,11 @@ local originalLoad = love.load
 function love.load()
   originalLoad()
   love.window.setMode(960, 540, {vsync = 0})
-  CONFIG.RENDER_SCALE = 1
+  CONFIG.RENDER_SCALE = 1 -- Legacy baselines use window-relative resolution.
+  CONFIG.RENDER_W, CONFIG.RENDER_H = 960, 540 -- Fixed comparison resolution.
   love.resize(960, 540)
   print('Renderer: ' .. table.concat({love.graphics.getRendererInfo()}, ' | '))
+  print('CRT: ' .. tostring(CONFIG.CRT_ENABLED or false) .. '; PNG comparison uses raw scene canvas')
   local cases = {{3.5,3.5,0.5,0,0}, {3.5,3.5,0.5,0,-30},
     {3.5,3.5,0.5,0,60}, {5.5,6.5,2.5,0,-35},
     {3.5,3.5,0.5,90,0}, {3.5,3.5,0.5,0,89.5},

@@ -24,7 +24,7 @@ harness = Path(__file__).with_suffix('.lua').read_text()
 def run(source, name):
     app = work / name
     app.mkdir(exist_ok=True)
-    for asset in ['levels.lua', 'dirt.png', 'grass.png', 'skybox']:
+    for asset in ['levels.lua', 'bricks.png', 'ground.png', 'skybox', 'crt-lottes-fast.glsl', 'Px437_IBM_VGA_8x16.ttf']:
         target = app / asset
         if not target.exists():
             target.symlink_to(root / asset)

@@ -9,10 +9,13 @@ local CONFIG = {
   CAM_HEIGHT       = 0.5,              -- Player eye offset from floor
   MAX_PITCH        = math.rad(89.5),   -- Vertical look clamp
   VIEW_DIST        = 16.0,             -- Max raycast distance (fog cutoff)
-  RENDER_SCALE     = 0.25,              -- Internal 3D resolution (0.5 = 25% of window pixels)
-  VSYNC            = false,            -- Synchronize presentation to display refresh
+  RENDER_W         = 320,             -- Fixed internal resolution; 4:3 CRT presentation
+  RENDER_H         = 240,
+  VSYNC            = true,            -- Synchronize presentation to display refresh
   MAX_FPS          = 333,              -- VSync-off limit; 0 = uncapped
   
+  CRT_ENABLED      = true,             -- CRT post-processing; F2 toggles at runtime
+
   -- Jump & Physics
   GRAVITY          = 18.0,             -- Downward acceleration
   JUMP_PEAK_HEIGHT = 1.2,              -- Peak jump height above launch floor (in units)
@@ -46,8 +49,10 @@ local MAX_DDA_STEPS = math.ceil(CONFIG.VIEW_DIST * math.sqrt(2)) + 2
 
 -- ─────────────────── state variables ────────────────────────────────
 local SCR_W, SCR_H = 0, 0
-local RENDER_W, RENDER_H = 0, 0
+local RENDER_W, RENDER_H = CONFIG.RENDER_W, CONFIG.RENDER_H
+local renderScale, viewportX, viewportY = 1, 0, 0
 local renderCanvas = nil
+local crtShader = nil
 local px, py, rot, pitch = 3.5, 3.5, 0, 0
 local eyeHeight = CONFIG.CAM_HEIGHT
 local yVel = 0
@@ -145,13 +150,13 @@ local camRight   = { 0, 0, 0 }
 local camUp      = { 0, 0, 0 }
 
 -- ─────────────────── textures & level map ───────────────────────────
-local dirt = love.graphics.newImage("dirt.png")
-dirt:setFilter("nearest", "nearest")
-dirt:setWrap("repeat", "repeat")
+local bricks = love.graphics.newImage("bricks.png")
+bricks:setFilter("nearest", "nearest")
+bricks:setWrap("repeat", "repeat")
 
-local grass = love.graphics.newImage("grass.png")
-grass:setFilter("nearest", "nearest")
-grass:setWrap("repeat", "repeat")
+local ground = love.graphics.newImage("ground.png")
+ground:setFilter("nearest", "nearest")
+ground:setWrap("repeat", "repeat")
 
 local blinkSkybox = love.graphics.newImage("skybox/blink/cubemap.png")
 blinkSkybox:setFilter("linear", "linear")
@@ -432,14 +437,28 @@ local function move(dx, dy, canStep)
   end
 end
 
+local function updateCrtShader()
+  if not CONFIG.CRT_ENABLED then return end
+  if not crtShader then crtShader = love.graphics.newShader("crt-lottes-fast.glsl") end
+  crtShader:send("Texture", renderCanvas)
+  crtShader:send("InputSize", { RENDER_W, RENDER_H })
+  local pixelScale = renderScale * love.graphics.getDPIScale()
+  crtShader:send("OutputSize", { RENDER_W * pixelScale, RENDER_H * pixelScale })
+end
+
+function love.keypressed(key)
+  if key == "f2" then
+    CONFIG.CRT_ENABLED = not CONFIG.CRT_ENABLED
+    updateCrtShader()
+  end
+end
+
 -- ─────────────────── viewport update ────────────────────────────────
 local function updateProjection(w, h)
   SCR_W, SCR_H = w, h
-  if type(CONFIG.RENDER_SCALE) ~= "number" or CONFIG.RENDER_SCALE <= 0 or CONFIG.RENDER_SCALE > 1 then
-    error("CONFIG.RENDER_SCALE must be greater than 0 and at most 1")
-  end
-  RENDER_W = math.max(1, math.floor(SCR_W * CONFIG.RENDER_SCALE + 0.5))
-  RENDER_H = math.max(1, math.floor(SCR_H * CONFIG.RENDER_SCALE + 0.5))
+  RENDER_W, RENDER_H = CONFIG.RENDER_W, CONFIG.RENDER_H
+  renderScale = math.min(SCR_W / RENDER_W, SCR_H / RENDER_H)
+  viewportX, viewportY = (SCR_W - RENDER_W * renderScale) / 2, (SCR_H - RENDER_H * renderScale) / 2
 
   if not renderCanvas or renderCanvas:getWidth() ~= RENDER_W or renderCanvas:getHeight() ~= RENDER_H then
     if renderCanvas then renderCanvas:release() end
@@ -453,6 +472,7 @@ local function updateProjection(w, h)
 
   raycastShader:send("tanHalfHFOV", tanHalfHFOV)
   raycastShader:send("tanHalfVFOV", tanHalfVFOV)
+  updateCrtShader()
 end
 
 function love.resize(w, h)
@@ -470,12 +490,15 @@ function love.load()
   })
   love.mouse.setRelativeMode(true)
   love.graphics.setBackgroundColor(0, 0, 0)
+  local font = love.graphics.newFont("Px437_IBM_VGA_8x16.ttf", 16)
+  font:setFilter("nearest", "nearest")
+  love.graphics.setFont(font)
 
   updateProjection(love.graphics.getDimensions())
 
   -- Static uniform binding
-  raycastShader:send("wallTex", dirt)
-  raycastShader:send("floorTex", grass)
+  raycastShader:send("wallTex", bricks)
+  raycastShader:send("floorTex", ground)
   raycastShader:send("levelTex", levelTexture)
   raycastShader:send("skyboxTex", blinkSkybox)
   raycastShader:send("levelSize", { levelW, levelH })
@@ -632,10 +655,6 @@ function love.draw()
   love.graphics.setShader(raycastShader)
   love.graphics.rectangle("fill", 0, 0, RENDER_W, RENDER_H)
   love.graphics.setShader()
-  love.graphics.setCanvas()
-
-  love.graphics.draw(renderCanvas, 0, 0, 0, SCR_W / RENDER_W, SCR_H / RENDER_H)
-
   love.graphics.setBlendMode("alpha")
 
   -- Rebuild text at 10 Hz instead of formatting and laying it out every frame.
@@ -653,7 +672,7 @@ function love.draw()
     hud:add(("CPU: %.1f%% | GPU: %s"):format(
       performance.cpuPercent, gpuText
     ), 0, 40)
-    hud:add(("RAM: %.1f MB | Graphics memory: %.1f MB"):format(
+    hud:add(("RAM: %.1f MB | Gfx: %.1f MB"):format(
       performance.ramMB, performance.graphicsMemoryMB
     ), 0, 60)
     hud:add(("Eye Z: %.2f (Peak Jump: +%.2f)"):format(
@@ -664,6 +683,14 @@ function love.draw()
     ), 0, 100)
   end
   love.graphics.draw(hud, 10, 10)
+  love.graphics.setCanvas()
+
+  love.graphics.clear(0, 0, 0, 1)
+  love.graphics.setBlendMode("replace")
+  if CONFIG.CRT_ENABLED then love.graphics.setShader(crtShader) end
+  love.graphics.draw(renderCanvas, viewportX, viewportY, 0, renderScale, renderScale)
+  love.graphics.setShader()
+  love.graphics.setBlendMode("alpha")
 end
 
 -- Advance a shared deadline to absorb sleep jitter without losing average FPS.
