@@ -498,3 +498,76 @@ python3 tools/check_ao.py
 luajit tools/check_streaming.lua
 python3 tools/check_streaming_render.py
 ```
+
+## Frame consistency: background generation — 2026-09-15
+
+Cold-region construction previously ran synchronously when a visible chunk was
+missing. That avoided holes but blocked presentation. Gameplay now starts one LÖVE
+worker with its own terrain cache and Lua heap. Only finished chunk buffers reach
+main-thread CPU storage and GPU uploads. No terrain generation runs in the gameplay
+update path once the worker starts.
+
+The preload ring grows from 5,329 to 7,569 chunks (eight chunks of padding), without
+changing 556-block visibility. Transfer queues hold at most 32 jobs/results; obsolete
+request tickets are rejected. Main-thread result consumption has a cooperative
+0.5 ms budget. An individual GPU upload can overrun the remaining budget. The worker
+blocks on its channel when idle and is joined on exit. First renderer use is warmed
+at load time. Offline/synchronous world APIs remain available for tools and loading.
+
+Movement never advances into missing visible chunks. Under exceptional worker
+starvation it waits at the loaded boundary, allowing rendering/input to continue.
+This is an explicit overload behavior, not an absolute constant-FPS guarantee.
+The production physics test covered 599.006 blocks in 12 seconds (normal initial
+acceleration included), with no lost sprint movement or main-thread terrain calls.
+
+### Sequential paced sprint comparison
+
+RX 6700 XT, Mesa 26.2.2, 1920×1080, seed 1337, 556-block view, diagonal movement
+at 50 blocks/s for 1,440 frames scheduled at 120 FPS. The path enters cold macro
+regions. Frame work includes GPU synchronization and full framebuffer readback;
+desktop presentation/VSync is excluded. Both runs rendered identical settings.
+
+| Metric | Before | Worker + preload |
+| --- | ---: | ---: |
+| Streaming median | 0.096 ms | 0.002 ms |
+| Streaming p99 | 1.423 ms | 0.520 ms |
+| Streaming maximum | 29.150 ms | 0.663 ms |
+| Frame work median | 6.657 ms | 6.402 ms |
+| Frame work p99 | 10.275 ms | 9.986 ms |
+| Frame work maximum, excluding first resize frame | 37.919 ms | 10.709 ms |
+| Unavailable visible views | 0 | 0 |
+| Frames exceeding 8.33 ms work budget | 182 | 158 |
+
+The first harness frame follows its own window/canvas resize and measured 18.430 /
+18.919 ms; it is included in raw logs and deadline-miss counts. Production load warms
+its actual initial canvas. Removing generation spikes does not remove variation in
+GPU scene complexity: the demanding aerial path still exceeds a 120 FPS work budget
+in some views. These measurements do not establish a guarantee at arbitrary FPS.
+
+The existing 1,200-frame renderer benchmark measured 2.662 ms median / 3.972 ms p99,
+versus the prior 2.641 / 3.940 ms run: roughly unchanged shader throughput. That
+benchmark drives the synchronous world API, so it isolates the larger texture ring;
+the separate sprint test measures the actual worker path.
+
+Memory tradeoff: approximately 32.81 MiB more combined CPU/GPU ring buffers, plus
+one worker-owned regional terrain cache. Ordinary transfer payloads are 1 KiB;
+complex payloads are 5 KiB (at most 160 KiB across 32 in-flight buffers, excluding
+channel/table metadata). World generation and shader algorithms are unchanged.
+
+Validation covers deterministic worker heights/materials/water/spans, no main-thread
+terrain generation, bounded queues, stale result rejection, teleports, stop/restart,
+production movement at full sprint speed, exact GPU/CPU upload parity, rendering,
+AO, collision and frame pacing. Source snapshot and raw per-frame CSVs are in
+`artifacts/streaming-worker/`.
+
+```sh
+python3 tools/profile_streaming.py --sources artifacts/streaming-worker/before --output /tmp/stream-before
+python3 tools/profile_streaming.py --output /tmp/stream-after
+python3 tools/check_worker.py
+python3 tools/check_worker_movement.py
+python3 tools/check_render.py
+python3 tools/check_ao.py
+luajit tools/check_collision.lua
+luajit tools/check_streaming.lua
+luajit tools/check_frame_loop.lua
+```

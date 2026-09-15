@@ -98,7 +98,7 @@ introduce artificial outlets.
 
 River carving and erosion-like shaping occur on cached regional controls, spaced
 four blocks apart after coarse routing. No per-block erosion simulation. Macro work
-runs in resumable batches during streaming; the same work runs synchronously during
+runs on a dedicated worker during gameplay; the same work runs synchronously during
 initial loading. A 32-block geometry margin supports boundary-consistent landing and bank stencils.
 Region cache uses approximately 16.03 MiB of fixed arrays plus sparse fluid records.
 
@@ -133,16 +133,27 @@ sand merely for being near sea level. Snow elevation varies with regional climat
 
 ## Streaming and rendering
 
-Default settings retain 5,329 chunks (1168×1168 blocks). Offsets sort once. Normal
+Default settings retain 7,569 chunks (1392×1392 blocks), including eight chunks of
+prefetch padding around the unchanged 556-block view. Offsets sort once. Normal
 movement requests only incoming rows/columns; teleports rebuild from presorted
-offsets. Chunk buffers and queue links are reused. Macro-region misses pause chunk
-work while a resumable build advances; visible terrain remains prefetched.
+offsets. Chunk buffers and queue links are reused. `terrain_worker.lua` owns a separate
+Lua state and terrain cache: cold-region builds, chunk generation and their garbage
+collection stay off the render thread. At most 32 jobs/results are in flight.
+Completed buffers are copied/uploaded with a cooperative 0.5 ms per-frame budget;
+individual uploads can exceed the remaining budget. Request tickets discard obsolete
+results after reversals or teleports. Shutdown joins the worker cleanly.
+
+Movement checks visible residency before advancing. If the worker falls behind,
+movement waits at the loaded boundary instead of exposing recycled terrain or
+blocking a frame to generate it. Normal 50-block/s sprint tests need no such waits.
+The renderer's first use is warmed during loading. Synchronous `World:step` remains
+available for initial loading, offline tools and deterministic tests.
 
 `chunk.data` stores `uint16_t[256]` heights. `chunk.surface` stores a packed material
 ID and water height: `material * 2048 + waterTop * 8`; zero water means dry.
 The existing `rg16f` GPU image stores `R = terrainHeight * 8 + materialID` and
 `G = waterTop * 8`. R stays at or below 2036; G stores exact eighth-block heights.
-Shader decoding uses rounded R, modulo 8 for material, floor(R / 8) for terrain,
+Shader decoding uses exact integer R, R - floor(R / 8) * 8 for material, floor(R / 8) for terrain,
 and G / 8 for water. FFI writes a contiguous upload buffer; one
 16×16 upload plus one chunk-maximum upload updates the GPU, with no per-pixel
 `setPixel()` calls or extra material texture fetch. CPU images mirror uploads for
@@ -265,9 +276,11 @@ and ceilings, blocks low overhangs, and handles jump/flight ceiling crossings.
 The camera stays 0.18 blocks below the physical head when pressed against a roof.
 Single-span columns retain a direct height comparison for collision.
 
-At view distance 556, fixed span images use **20.82 MiB GPU**. CPU collision records
-use another **20.82 MiB**, and reloadable CPU image mirrors use **20.82 MiB**.
-The existing height/material/water GPU image uses 5.20 MiB. Fixed storage won the
+At view distance 556 with worker prefetch, fixed span images use **29.57 MiB GPU**.
+CPU collision records use another **29.57 MiB**, and reloadable CPU image mirrors
+use **29.57 MiB**. The height/material/water GPU image uses 7.39 MiB. The larger
+prefetch ring adds approximately 32.81 MiB across CPU/GPU buffers; the worker owns
+an additional terrain cache. Fixed storage won the
 render comparison against a compact sparse page atlas; detailed timings and the
 memory tradeoff are in [PERFORMANCE.md](PERFORMANCE.md).
 

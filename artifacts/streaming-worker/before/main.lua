@@ -47,7 +47,7 @@ local jumpVelocity = math.sqrt(2.0 * CONFIG.GRAVITY * CONFIG.JUMP_PEAK_HEIGHT)
 local MAX_DDA_STEPS = math.ceil(CONFIG.VIEW_DIST * math.sqrt(2)) + 2
 
 -- ─────────────────── state variables ────────────────────────────────
-local world = World.new(CONFIG.SEED, CONFIG.VIEW_DIST, {background=true,caves=CONFIG.CAVES,SEA_LEVEL=CONFIG.SEA_LEVEL,
+local world = World.new(CONFIG.SEED, CONFIG.VIEW_DIST, {caves=CONFIG.CAVES,SEA_LEVEL=CONFIG.SEA_LEVEL,
   OCEAN_FLOOR=CONFIG.OCEAN_FLOOR, CONTINENT_SCALE=CONFIG.CONTINENT_SCALE, DETAIL_HEIGHT=CONFIG.DETAIL_HEIGHT})
 local SCR_W, SCR_H = 0, 0
 local RENDER_W, RENDER_H = 0, 0
@@ -208,8 +208,6 @@ end
 
 local function move(dx, dy, canStep)
   if dx == 0 and dy == 0 then return end
-  -- Backpressure only if generation cannot keep up: never enter recycled terrain.
-  if world.worker and not world:canRender(px+dx,py+dy) then return end
   local footH = eyeHeight - CONFIG.CAM_HEIGHT
   local maxStep = CONFIG.PLAYER_RADIUS * 0.5
   local steps = math.max(1, math.ceil(math.max(math.abs(dx), math.abs(dy)) / maxStep))
@@ -297,13 +295,6 @@ function love.load()
   raycastShader:send("cacheSize", world.size)
   raycastShader:send("maxHeight", world.maxHeight)
   raycastShader:send("viewDist", CONFIG.VIEW_DIST)
-  for uniform,file in pairs({dirtTex="dirt",grassSideTex="grass_block_side",grassTopTex="grass_block_top"}) do
-    local texture=love.graphics.newImage("textures/"..file..".png")
-    texture:setFilter("nearest","nearest");texture:setWrap("repeat","repeat")
-    raycastShader:send(uniform,texture)
-  end
-  -- Pay first-use shader/driver work during loading, before interactive frames.
-  love.draw();renderCanvas:newImageData():release()
 end
 
 function love.mousemoved(_, _, dx, dy)
@@ -432,7 +423,6 @@ local function updatePhysics(dt)
 end
 
 function love.update(dt)
-  if not world.worker then world:startWorker() end
   hudElapsed = hudElapsed + dt
   if CONFIG.DEBUG_ENABLED then updatePerformanceStats(dt) end
   physicsAccumulator = physicsAccumulator + math.min(dt, CONFIG.MAX_FRAME_DT)
@@ -450,10 +440,6 @@ function love.update(dt)
   if love.keyboard.isDown("escape") then
     love.event.quit()
   end
-end
-
-function love.quit()
-  world:stopWorker()
 end
 
 function love.draw()

@@ -5,7 +5,7 @@ World.__index=World
 function World.new(seed,viewDistance,terrainConfig)
   assert(type(seed)=='number' and seed==math.floor(seed) and math.abs(seed)<=2147483647,'Seed must be a signed 32-bit integer')
   assert(type(viewDistance)=='number' and viewDistance>=0 and viewDistance<math.huge,'View distance must be finite and nonnegative')
-  local radius=math.ceil(viewDistance/16)+(terrainConfig and terrainConfig.background and 8 or 1)
+  local radius=math.ceil(viewDistance/16)+1
   local self=setmetatable({seed=seed,radius=radius,visibleDistance=viewDistance+2,slots=radius*2+1,chunks={},offsets={},edgeOrder={},
     first=0,last=0,pendingCount=0,generated=0,terrain=Terrain.new(seed,terrainConfig)},World)
   self.maxHeight=self.terrain.maxHeight;self.spanOverflowCount=0
@@ -100,7 +100,6 @@ function World:enqueue(cx,cy)
   self:removeRequest(chunk)
   if chunk.x==cx and chunk.y==cy then return end
   chunk.requestX,chunk.requestY=cx,cy
-  chunk.dispatched=false
   chunk.previous,chunk.next,chunk.queued=self.last,0,true
   if self.last~=0 then self.chunks[self.last].next=chunk.index else self.first=chunk.index end
   self.last=chunk.index;self.pendingCount=self.pendingCount+1
@@ -210,65 +209,8 @@ end
 function World:bindSpans(shader)
   if shader:hasUniform('spanTex0') then shader:send('spanTex0',self.spanTex0);shader:send('spanTex1',self.spanTex1) end
 end
-function World:startWorker()
-  if self.worker then return end
-  self.jobs,self.results=love.thread.newChannel(),love.thread.newChannel()
-  self.worker=love.thread.newThread('terrain_worker.lua')
-  self.inFlight,self.nextTicket=0,0
-  self.worker:start(self.jobs,self.results,self.seed,self.terrain.settings)
-end
-function World:stopWorker()
-  if not self.worker then return end
-  self.jobs:clear();self.jobs:push(false);self.worker:wait()
-  self.worker=nil;self.jobs=nil;self.results=nil;self.inFlight=0
-  for _,chunk in ipairs(self.chunks) do chunk.dispatched=false end
-end
-function World:canRender(x,y)
-  local r=self.visibleDistance
-  if x-r<(self.cx-self.radius)*16 or x+r>=(self.cx+self.radius+1)*16 or
-     y-r<(self.cy-self.radius)*16 or y+r>=(self.cy+self.radius+1)*16 then return false end
-  local index=self.first
-  while index~=0 do
-    local c=self.chunks[index];index=c.next
-    local dx=math.max(c.requestX*16-x,0,x-(c.requestX+1)*16)
-    local dy=math.max(c.requestY*16-y,0,y-(c.requestY+1)*16)
-    if dx*dx+dy*dy<=r*r then return false end
-  end
-  return true
-end
-function World:updateWorker()
-  local err=self.worker:getError();assert(not err,err)
-  -- Bounded transfers; cold regions and chunk generation never run on this thread.
-  local deadline=love.timer.getTime()+0.0005
-  repeat
-    local result=self.results:pop()
-    if not result then break end
-    self.inFlight=self.inFlight-1
-    local ticket,cx,cy,maximum,complex,overflow,bytes=unpack(result)
-    local c=self.chunks[self:slot(cx,cy)]
-    if c.queued and c.ticket==ticket and c.requestX==cx and c.requestY==cy then
-      local data=ffi.cast('const uint8_t*',bytes:getFFIPointer())
-      ffi.copy(c.data,data,512);ffi.copy(c.surface,data+512,512)
-      if complex then ffi.copy(c.spans,data+1024,4096) end
-      c.x,c.y,c.maximum,c.complex=cx,cy,maximum,complex
-      self:removeRequest(c);self.generated=self.generated+1
-      self.spanOverflowCount=self.spanOverflowCount+overflow
-      if self.upload then self.upload(c) end
-    end
-  until love.timer.getTime()>=deadline
-  local index=self.first
-  while index~=0 and self.inFlight<32 do
-    local c=self.chunks[index];index=c.next
-    if not c.dispatched then
-      self.nextTicket=self.nextTicket+1;c.ticket=self.nextTicket;c.dispatched=true
-      self.jobs:push({c.ticket,c.requestX,c.requestY,self.forceSpans})
-      self.inFlight=self.inFlight+1
-    end
-  end
-end
 function World:update(x,y)
   self:request(x,y)
-  if self.worker then self:updateWorker();return end
   if self.first==0 then return end
   -- Never render recycled slots from behind the player. Include AO/water neighbors
   -- and camera interpolation; only offscreen prefetch may miss its time budget.

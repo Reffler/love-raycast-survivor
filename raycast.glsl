@@ -8,6 +8,9 @@ extern Image heightTex;
 extern Image chunkMaxTex;
 extern Image spanTex0;
 extern Image spanTex1;
+extern Image dirtTex;
+extern Image grassSideTex;
+extern Image grassTopTex;
 extern float cacheSize;
 extern vec2 cacheOffset;
 extern float maxHeight;
@@ -118,6 +121,7 @@ vec4 effect(vec4 color, Image dummy, vec2 tc, vec2 sc) {
   float previousWater=0.0;
   bool previousCavity=false;
   float solidHit=-1.0;
+  float solidTexture=-1.0;
   vec3 solidNormal=vec3(0.0),solidColor=vec3(0.0);
   for (int i=0;i<MAX_DDA_STEPS;++i) {
     vec2 chunk=floor(cell/16.0);
@@ -198,6 +202,10 @@ vec4 effect(vec4 color, Image dummy, vec2 tc, vec2 sc) {
       solidHit=wall ? entry : top;
       solidNormal=wall ? vec3(normal,0.0) : vec3(0.0,0.0,underside ? -1.0 : 1.0);
       solidColor=base*light;
+      if (material<0.5 || material>=3.5) {
+        solidTexture=material>=3.5 || underside ? 0.0 : wall ? (z>=height-1.0 ? 1.0 : 0.0) : 2.0;
+        solidColor=vec3(light);
+      }
       break;
     }
     if (end>=viewDist) break;
@@ -213,6 +221,15 @@ vec4 effect(vec4 color, Image dummy, vec2 tc, vec2 sc) {
     if (ray.z>=0.0 && camPos.z+ray.z*entry>maxHeight) break;
   }
   // Shade once after traversal, keeping AO temporaries out of the stepping loop.
-  if (solidHit>=0.0) return vec4(solidColor*ambientOcclusion(camPos+ray*solidHit,solidNormal),1.0);
+  if (solidHit>=0.0) {
+    vec3 hit=camPos+ray*solidHit;
+    if (solidTexture>=0.0) {
+      vec2 uv=abs(solidNormal.z)>0.5 ? fract(hit.xy)
+        : vec2(fract(solidNormal.x!=0.0 ? hit.y : hit.x),1.0-fract(hit.z));
+      solidColor*=solidTexture<0.5 ? Texel(dirtTex,uv).rgb
+        : solidTexture<1.5 ? Texel(grassSideTex,uv).rgb : Texel(grassTopTex,uv).rgb;
+    }
+    return vec4(solidColor*ambientOcclusion(hit,solidNormal),1.0);
+  }
   return vec4(SKY,1.0);
 }

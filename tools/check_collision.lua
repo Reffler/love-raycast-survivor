@@ -70,6 +70,15 @@ reset(0.5,0.5,0);keys={w=true,rshift=true}
 for i=1,120 do updatePhysics(CONFIG.FIXED_DT) end
 assert(math.abs(velX-CONFIG.SPRINT_SPEED)<1e-8,'Ground sprint regressed')
 print('PASS: double-tap toggle, repeat rejection, hover, rise, descend, flight/ground sprint, terrain collision, gravity resume')
+reset(0.5,0.5,20);flying=true;keys={w=true,lshift=true}
+world.worker={};world.canRender=function() return false end
+for i=1,120 do updatePhysics(CONFIG.FIXED_DT) end
+assert(px==0.5 and py==0.5,'Movement entered unloaded terrain')
+world.canRender=function() return true end
+for i=1,120 do updatePhysics(CONFIG.FIXED_DT) end
+assert(math.abs(px-50.5)<1e-8,'Movement failed to resume at full sprint speed')
+world.worker,world.canRender=nil,nil
+print('PASS: unloaded-cache backpressure preserves position and resumes full-speed movement')
 world=World.new(CONFIG.SEED,CONFIG.VIEW_DIST)
 for _,position in ipairs({{15.5,15.5},{-16.5,-16.5},{1000000.5,-1000000.5}}) do
   local x,y=unpack(position);reset(x,y,world:height(math.floor(x),math.floor(y)))

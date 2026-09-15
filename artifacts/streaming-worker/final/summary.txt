@@ -1,0 +1,5 @@
+Renderer: OpenGL | 4.6 (Core Profile) Mesa 26.2.2-arch3.2 | AMD | AMD Radeon RX 6700 XT (radeonsi, navi22, ACO, DRM 3.64, 7.2.2-1-cachyos)
+1080p, 556 blocks, 50 blocks/s, 120 FPS schedule, 1440 frames; deadline misses=158; unavailable views=0
+frame work + readback median=6.402 p95=8.877 p99=9.986 p99.9=10.709 max=18.919 ms
+streaming median=0.002 p95=0.400 p99=0.520 p99.9=0.584 max=0.663 ms
+frame intervals median=8.381 p95=9.098 p99=9.988 p99.9=10.711 max=18.924 ms
