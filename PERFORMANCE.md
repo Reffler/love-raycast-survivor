@@ -439,3 +439,62 @@ cross-day comparison, not a controlled same-session baseline.
 Three-seed, nine-view renderer survey: `artifacts/grass-stone/flight-views.png`.
 Focused surface tests pass exact material seams, independent build order,
 chunk/scalar agreement, drainage and coastline checks. Logs: `artifacts/grass-stone/checks.txt`.
+
+## Lossless shader optimization — 2026-09-15
+
+Same RX 6700 XT / Mesa 26.2.2, seed 1337, current 556-block view distance,
+native 1920×1080, AO and caves enabled. No quality, movement, view-distance,
+generation, or frame-pacing settings changed.
+
+Changes:
+
+- Hardware repeat wrapping replaces shader modulo for height, span and maximum textures.
+- Wall AO shares texture reads across three vertical samples per column: three column
+  fetches replace eight independent occupancy queries. Corner weights stay identical.
+- Chunk exit distances are computed only on chunk entry.
+- AO shading runs after solid-hit traversal; unused trailing spans terminate their scan.
+- Exact packed integer codes avoid redundant rounding and modulo during decoding.
+
+The existing 1,200-frame moving benchmark measured 3.020 → 2.641 ms median,
+4.362 → 3.940 ms p99, and 4.592 → 4.451 ms maximum. Median implies 14.4% higher
+throughput for this render-plus-readback workload. These are sequential runs;
+GPU synchronization/readback is included, desktop presentation and VSync are excluded.
+VSync remains enabled in game, so displayed FPS remains refresh-rate limited.
+
+A separate harness alternates old/new shaders on identical resident worlds:
+
+| View | Before, ms | After, ms | Throughput increase |
+| --- | ---: | ---: | ---: |
+| Ground | 3.3675 | 3.0545 | 10.25% |
+| Horizon | 2.7555 | 2.5021 | 10.13% |
+| Downward | 2.3831 | 2.1405 | 11.33% |
+| Cave | 2.3472 | 2.1858 | 7.39% |
+| Cave ceiling | 1.8136 | 1.7469 | 3.82% |
+
+Ocean and fractional-water fixtures also pass exact-pixel comparisons. All seven
+scene fixtures plus 24 views across negative, region-boundary and million-block
+coordinates match the original shader byte-for-byte. Streaming, packed-data,
+chunk-skipping, water, AO and native-presentation regressions pass.
+
+Generation routines, chunk storage, uploads and streaming policy are unchanged by
+this optimization. The only world-side addition sets wrapping on four textures at
+initialization/reload. Separate generation profiles show substantial LuaJIT/timing
+variation (warm chunk median 11.20 → 8.46 µs, complex median 56.42 → 89.38 µs,
+aggregate 72,758 → 70,239 chunks/s); these do not establish a generation speedup or
+stable regression. No per-chunk work or texture storage was added.
+
+Sources and raw evidence: `artifacts/fps-optimization/before/`, `baseline/`, `final/`,
+`paired-final.txt`, and `generation-{before,after}.csv` in that directory.
+Reproduce sequentially:
+
+```sh
+python3 tools/compare_render.py --reference artifacts/fps-optimization/before/raycast.glsl
+python3 tools/benchmark.py --shader artifacts/fps-optimization/before/raycast.glsl
+python3 tools/benchmark.py
+python3 tools/profile_world.py --distance 556 --sources artifacts/fps-optimization/before
+python3 tools/profile_world.py --distance 556
+python3 tools/check_render.py
+python3 tools/check_ao.py
+luajit tools/check_streaming.lua
+python3 tools/check_streaming_render.py
+```

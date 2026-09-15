@@ -24,15 +24,15 @@ vec3 surfaceColor(float material,bool wall) {
   return DIRT;
 }
 float waterAt(vec2 cell) {
-  return Texel(heightTex,(cell+cacheOffset+0.5)/cacheSize).g/8.0;
+  return Texel(heightTex,(mod(cell+cacheOffset,cacheSize)+0.5)/cacheSize).g/8.0;
 }
 float solidAt(vec3 block) {
   if (block.z<0.0) return 1.0;
-  vec2 uv=(block.xy+cacheOffset+0.5)/cacheSize;
+  vec2 uv=(mod(block.xy+cacheOffset,cacheSize)+0.5)/cacheSize;
   float height=floor(Texel(heightTex,uv).r/8.0);
   if (block.z>=height) return 0.0;
   vec2 chunk=floor(block.xy/16.0);
-  float code=Texel(chunkMaxTex,(chunk+cacheOffset/16.0+0.5)/(cacheSize/16.0)).r;
+  float code=Texel(chunkMaxTex,(mod(chunk+cacheOffset/16.0,cacheSize/16.0)+0.5)/(cacheSize/16.0)).r;
   if (code<512.0) return 1.0;
   vec4 a=Texel(spanTex0,uv),b=Texel(spanTex1,uv);
   return ((block.z>=a.x && block.z<a.y) || (block.z>=a.z && block.z<a.w) ||
@@ -44,12 +44,12 @@ float cornerAO(float sideA,float sideB,float diagonal) {
 vec3 solidColumn(vec3 block) {
   // Wall AO needs three heights in each of three columns; share their texture reads.
   vec3 z=block.z+vec3(-1.0,0.0,1.0);
-  vec2 uv=(block.xy+cacheOffset+0.5)/cacheSize;
+  vec2 uv=(mod(block.xy+cacheOffset,cacheSize)+0.5)/cacheSize;
   float height=floor(Texel(heightTex,uv).r/8.0);
   vec3 occupied=vec3(1.0)-step(vec3(height),z);
   if (occupied.x==0.0) return occupied;
   vec2 chunk=floor(block.xy/16.0);
-  float code=Texel(chunkMaxTex,(chunk+cacheOffset/16.0+0.5)/(cacheSize/16.0)).r;
+  float code=Texel(chunkMaxTex,(mod(chunk+cacheOffset/16.0,cacheSize/16.0)+0.5)/(cacheSize/16.0)).r;
   if (code<512.0) return occupied;
   vec4 a=Texel(spanTex0,uv),b=Texel(spanTex1,uv);
   vec3 spans=max(max(step(vec3(a.x),z)*(1.0-step(vec3(a.y),z)),step(vec3(a.z),z)*(1.0-step(vec3(a.w),z))),
@@ -112,24 +112,20 @@ vec4 effect(vec4 color, Image dummy, vec2 tc, vec2 sc) {
   vec2 normal=vec2(0.0);
   vec2 previousChunk=vec2(-1e10);
   float chunkHeight=maxHeight;
-  vec2 chunkSide=vec2(0.0);
-  float chunkEnd=0.0;
   bool complexChunk=false;
   float previousWater=0.0;
   bool previousCavity=false;
-  float solidHit=-1.0;
-  vec3 solidNormal=vec3(0.0),solidColor=vec3(0.0);
   for (int i=0;i<MAX_DDA_STEPS;++i) {
     vec2 chunk=floor(cell/16.0);
     if (any(notEqual(chunk,previousChunk))) {
-      chunkHeight=Texel(chunkMaxTex,(chunk+cacheOffset/16.0+0.5)/(cacheSize/16.0)).r;
+      chunkHeight=Texel(chunkMaxTex,(mod(chunk+cacheOffset/16.0,cacheSize/16.0)+0.5)/(cacheSize/16.0)).r;
       complexChunk=chunkHeight>=512.0;
-      chunkHeight-=complexChunk ? 512.0 : 0.0;
-      chunkSide=(stepDir*(chunk*16.0-camPos.xy)+stepDir*8.0+8.0)*delta;
-      chunkEnd=min(viewDist,min(chunkSide.x,chunkSide.y));
+      chunkHeight=mod(chunkHeight,512.0);
       previousChunk=chunk;
     }
     // Skip whole chunks only when entire ray segment clears their highest block.
+    vec2 chunkSide=(stepDir*(chunk*16.0-camPos.xy)+stepDir*8.0+8.0)*delta;
+    float chunkEnd=min(viewDist,min(chunkSide.x,chunkSide.y));
     if (min(camPos.z+ray.z*entry,camPos.z+ray.z*chunkEnd)>chunkHeight+0.00001) {
       if (chunkEnd>=viewDist) break;
       entry=chunkEnd;
@@ -142,24 +138,23 @@ vec4 effect(vec4 color, Image dummy, vec2 tc, vec2 sc) {
       continue;
     }
     float end=min(viewDist,min(side.x,side.y));
-    vec2 geometry=Texel(heightTex,(cell+cacheOffset+0.5)/cacheSize).rg;
-    float terrainCode=geometry.r; // Uploaded integer codes are exact in RG16F/RG32F.
+    vec2 geometry=Texel(heightTex,(mod(cell+cacheOffset,cacheSize)+0.5)/cacheSize).rg;
+    float terrainCode=floor(geometry.r+0.5);
     float height=floor(terrainCode/8.0);
-    float material=terrainCode-height*8.0;
+    float material=mod(terrainCode,8.0);
     float water=geometry.g/8.0;
     float z=camPos.z+ray.z*entry;
     bool wall=dot(normal,normal)>0.0 && z<height-0.00001;
     float top=ray.z<0.0 ? (height-camPos.z)/ray.z : viewDist+1.0;
     bool underside=false;
     if (complexChunk) {
-      vec2 uv=(cell+cacheOffset+0.5)/cacheSize;
+      vec2 uv=(mod(cell+cacheOffset,cacheSize)+0.5)/cacheSize;
       vec4 spans0=Texel(spanTex0,uv),spans1=Texel(spanTex1,uv);
       top=viewDist+1.0;wall=false;
       float hitMaterial=material;
       for (int span=0;span<4;++span) {
         vec2 bounds=span==0 ? spans0.xy : span==1 ? spans0.zw : span==2 ? spans1.xy : spans1.zw;
-        if (bounds.x<0.0) break;
-        if (bounds.y<=bounds.x) continue;
+        if (bounds.x<0.0 || bounds.y<=bounds.x) continue;
         bool spanWall=dot(normal,normal)>0.0 && z>=bounds.x && z<bounds.y-0.00001;
         float hit=spanWall ? entry : abs(ray.z)>1e-8 ? ((ray.z<0.0 ? bounds.y : bounds.x)-camPos.z)/ray.z : viewDist+1.0;
         if (hit>=entry && hit<=end && hit<top) {
@@ -195,10 +190,9 @@ vec4 effect(vec4 color, Image dummy, vec2 tc, vec2 sc) {
     if (wall || (top>=entry && top<=end)) {
       vec3 base=surfaceColor(material,wall);
       float light=wall ? (normal.x<0.0 ? 0.72 : normal.x>0.0 ? 0.58 : normal.y<0.0 ? 0.64 : 0.82) : underside ? 0.64 : 1.0;
-      solidHit=wall ? entry : top;
-      solidNormal=wall ? vec3(normal,0.0) : vec3(0.0,0.0,underside ? -1.0 : 1.0);
-      solidColor=base*light;
-      break;
+      vec3 hit=camPos+ray*(wall ? entry : top);
+      vec3 faceNormal=wall ? vec3(normal,0.0) : vec3(0.0,0.0,underside ? -1.0 : 1.0);
+      return vec4(base*light*ambientOcclusion(hit,faceNormal),1.0);
     }
     if (end>=viewDist) break;
     previousWater=exitWater;
@@ -212,7 +206,5 @@ vec4 effect(vec4 color, Image dummy, vec2 tc, vec2 sc) {
     side=(stepDir*(cell-camPos.xy)+stepDir*0.5+0.5)*delta;
     if (ray.z>=0.0 && camPos.z+ray.z*entry>maxHeight) break;
   }
-  // Shade once after traversal, keeping AO temporaries out of the stepping loop.
-  if (solidHit>=0.0) return vec4(solidColor*ambientOcclusion(camPos+ray*solidHit,solidNormal),1.0);
   return vec4(SKY,1.0);
 }

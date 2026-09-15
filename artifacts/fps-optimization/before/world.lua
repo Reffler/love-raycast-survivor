@@ -167,8 +167,6 @@ function World:initGraphics(x,y,format)
   self.spanTex0:setFilter('nearest','nearest');self.spanTex1:setFilter('nearest','nearest')
   self.spanTile0=love.image.newImageData(16,16,'rgba16f')
   self.spanTile1=love.image.newImageData(16,16,'rgba16f')
-  -- Hardware wrapping replaces per-sample modulo in the raycaster.
-  for _,texture in ipairs({self.texture,self.maxTexture,self.spanTex0,self.spanTex1}) do texture:setWrap('repeat','repeat') end
   local sp0=ffi.cast('uint16_t*',self.spanTile0:getFFIPointer())
   local sp1=ffi.cast('uint16_t*',self.spanTile1:getFFIPointer())
   local spanEncoded=ffi.new('uint16_t[256]')

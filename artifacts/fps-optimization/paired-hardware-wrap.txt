@@ -1,0 +1,8 @@
+Renderer: OpenGL | 4.6 (Core Profile) Mesa 26.2.2-arch3.2 | AMD | AMD Radeon RX 6700 XT (radeonsi, navi22, ACO, DRM 3.64, 7.2.2-1-cachyos)
+VIEW,ground,reference_ms,3.3794,current_ms,3.0775,speedup_pct,9.81,exact_pixels,PASS
+VIEW,horizon,reference_ms,2.7523,current_ms,2.5089,speedup_pct,9.70,exact_pixels,PASS
+VIEW,downward,reference_ms,2.3896,current_ms,2.1760,speedup_pct,9.81,exact_pixels,PASS
+VIEW,cave,reference_ms,2.3451,current_ms,2.1933,speedup_pct,6.92,exact_pixels,PASS
+VIEW,cave-ceiling,reference_ms,1.8184,current_ms,1.7507,speedup_pct,3.87,exact_pixels,PASS
+VIEW,ocean,reference_ms,1.9339,current_ms,1.8616,speedup_pct,3.88,exact_pixels,PASS
+VIEW,flowing-water,reference_ms,2.1564,current_ms,2.0957,speedup_pct,2.90,exact_pixels,PASS
