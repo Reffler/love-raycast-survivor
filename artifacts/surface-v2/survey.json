@@ -1,0 +1,80 @@
+[
+  {
+    "seed": 65168,
+    "points": {
+      "peak": [
+        1600,
+        -1760,
+        174
+      ],
+      "coast": [
+        0,
+        -872,
+        48
+      ],
+      "river": [
+        -376,
+        -1656,
+        68
+      ],
+      "plain": [
+        -40,
+        -952,
+        49
+      ]
+    },
+    "metrics": "POINT,peak,1600,-1760,174\nPOINT,coast,0,-872,48\nPOINT,river,-376,-1656,68\nPOINT,plain,-40,-952,49\nCOUNTS,grass=39199,sand=18287,rock=6637,snow=240,dirt=197781,ocean=214256,river=2350\n"
+  },
+  {
+    "seed": 716701,
+    "points": {
+      "peak": [
+        -64,
+        -1376,
+        195
+      ],
+      "coast": [
+        -760,
+        16,
+        48
+      ],
+      "river": [
+        -64,
+        -400,
+        68
+      ],
+      "plain": [
+        -144,
+        -296,
+        61
+      ]
+    },
+    "metrics": "POINT,peak,-64,-1376,195\nPOINT,coast,-760,16,48\nPOINT,river,-64,-400,68\nPOINT,plain,-144,-296,61\nCOUNTS,grass=171148,sand=19821,rock=15564,snow=1261,dirt=54350,ocean=71052,river=16208\n"
+  },
+  {
+    "seed": 452312,
+    "points": {
+      "peak": [
+        0,
+        -960,
+        198
+      ],
+      "coast": [
+        40,
+        504,
+        48
+      ],
+      "river": [
+        -1856,
+        96,
+        69
+      ],
+      "plain": [
+        0,
+        0,
+        57
+      ]
+    },
+    "metrics": "POINT,peak,0,-960,198\nPOINT,coast,40,504,48\nPOINT,river,-1856,96,69\nPOINT,plain,0,0,57\nCOUNTS,grass=201864,sand=37514,rock=15114,snow=1500,dirt=6152,ocean=25957,river=21297\n"
+  }
+]

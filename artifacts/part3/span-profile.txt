@@ -1,0 +1,7 @@
+RENDER,ordinary_legacy,median_ms,3.0162,p99_ms,3.3171
+RENDER,ordinary_spans_shader,median_ms,3.1201,p99_ms,3.2309
+RENDER,cave_fixed,median_ms,2.2565,p99_ms,2.4869
+RENDER,cave_sparse,median_ms,2.2716,p99_ms,2.8778
+RENDER,outdoor_complex_fixed,median_ms,2.2734,p99_ms,2.5788
+RENDER,outdoor_complex_sparse,median_ms,2.3147,p99_ms,2.7092
+STORAGE,resident_chunks,5329,complex_chunks,1188,fixed_gpu_mib,20.8164,sparse_gpu_mib,4.8055,cpu_span_mib,20.8164,sparse_pack_upload_ms,4.956

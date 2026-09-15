@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""Render production fluid fixtures and check outlet geometry and water colors."""
+import argparse, os, subprocess, tempfile
+from pathlib import Path
+root = Path(__file__).resolve().parents[1]
+app = Path(tempfile.mkdtemp(prefix="waterfall-acceptance-"))
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--output",type=Path,default=root/"artifacts/part2-8-views")
+output=parser.parse_args().output.resolve()
+output.mkdir(parents=True, exist_ok=True)
+for asset in root.iterdir():
+    if asset.name != "main.lua" and asset.suffix in {".lua", ".glsl", ".ttf"}:
+        (app / asset.name).symlink_to(asset)
+(app / "waterfall_fixtures.lua").symlink_to(root / "tools/waterfall_fixtures.lua")
+(app / "main.lua").write_text((root / "main.lua").read_text() + "\n" + (root / "tools/check_waterfall_render.lua").read_text())
+result = subprocess.run(["love", str(app)], capture_output=True, text=True, timeout=120,
+    env={**os.environ, "SDL_VIDEODRIVER": "offscreen", "ALSOFT_DRIVERS": "null", "RAYCAST_OUTPUT": str(output)})
+print(result.stdout, end="")
+print(result.stderr, end="")
+(output / "checks.txt").write_text(result.stdout)
+raise SystemExit(result.returncode)

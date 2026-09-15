@@ -1,0 +1,137 @@
+-- Fixed chunk pool and intrusive request queue: no movement-time table allocation.
+local ffi,Terrain=require('ffi'),require('terrain')
+local World={CHUNK=16}
+World.__index=World
+function World.new(seed,viewDistance,terrainConfig)
+  assert(type(seed)=='number' and seed==math.floor(seed) and math.abs(seed)<=2147483647,'Seed must be a signed 32-bit integer')
+  assert(type(viewDistance)=='number' and viewDistance>=0 and viewDistance<math.huge,'View distance must be finite and nonnegative')
+  local radius=math.ceil(viewDistance/16)+1
+  local self=setmetatable({seed=seed,radius=radius,slots=radius*2+1,chunks={},offsets={},edgeOrder={},
+    first=0,last=0,pendingCount=0,generated=0,terrain=Terrain.new(seed,terrainConfig)},World)
+  self.maxHeight=self.terrain.maxHeight
+  for i=1,self.slots^2 do
+    self.chunks[i]={data=ffi.new('uint16_t[256]'),x=math.huge,y=math.huge,index=i,previous=0,next=0,queued=false,requestX=0,requestY=0,maximum=0}
+  end
+  for y=-radius,radius do for x=-radius,radius do
+    self.offsets[#self.offsets+1]={x=x,y=y,distance=x*x+y*y}
+  end end
+  table.sort(self.offsets,function(a,b)
+    if a.distance~=b.distance then return a.distance<b.distance end
+    if a.x~=b.x then return a.x<b.x end
+    return a.y<b.y
+  end)
+  self.edgeOrder[1]=0
+  for i=1,radius do self.edgeOrder[#self.edgeOrder+1]=i;self.edgeOrder[#self.edgeOrder+1]=-i end
+  return self
+end
+function World:slot(cx,cy) return (cy%self.slots)*self.slots+cx%self.slots+1 end
+function World:heightAt(x,y) return self.terrain:height(x,y) end
+function World:height(x,y)
+  local cx,cy=math.floor(x/16),math.floor(y/16)
+  local chunk=self.chunks[self:slot(cx,cy)]
+  if chunk.x==cx and chunk.y==cy then return tonumber(chunk.data[(y%16)*16+x%16]) end
+  return self.terrain:height(x,y) -- Collision fallback never modifies the streaming queue.
+end
+-- Returned chunk is borrowed from fixed pool; valid until its slot is reused.
+function World:generateChunk(cx,cy)
+  local chunk=self.chunks[self:slot(cx,cy)]
+  chunk.maximum=self.terrain:generate(cx,cy,chunk.data)
+  chunk.x,chunk.y=cx,cy
+  self.generated=self.generated+1
+  return chunk
+end
+function World:removeRequest(chunk)
+  if not chunk.queued then return end
+  if chunk.previous~=0 then self.chunks[chunk.previous].next=chunk.next else self.first=chunk.next end
+  if chunk.next~=0 then self.chunks[chunk.next].previous=chunk.previous else self.last=chunk.previous end
+  chunk.queued=false;self.pendingCount=self.pendingCount-1
+end
+function World:enqueue(cx,cy)
+  local chunk=self.chunks[self:slot(cx,cy)]
+  if chunk.queued and chunk.requestX==cx and chunk.requestY==cy then return end
+  self:removeRequest(chunk)
+  if chunk.x==cx and chunk.y==cy then return end
+  chunk.requestX,chunk.requestY=cx,cy
+  chunk.previous,chunk.next,chunk.queued=self.last,0,true
+  if self.last~=0 then self.chunks[self.last].next=chunk.index else self.first=chunk.index end
+  self.last=chunk.index;self.pendingCount=self.pendingCount+1
+end
+function World:request(x,y)
+  local cx,cy=math.floor(x/16),math.floor(y/16)
+  if cx==self.cx and cy==self.cy then return end
+  local dx,dy=cx-(self.cx or cx),cy-(self.cy or cy)
+  if not self.cx or math.abs(dx)>1 or math.abs(dy)>1 then
+    while self.first~=0 do self:removeRequest(self.chunks[self.first]) end
+    for i=1,#self.offsets do
+      local offset=self.offsets[i];self:enqueue(cx+offset.x,cy+offset.y)
+    end
+  else
+    -- Only incoming strips; retained requests keep their place in queue.
+    if dx~=0 then for i=1,self.slots do self:enqueue(cx+dx*self.radius,cy+self.edgeOrder[i]) end end
+    if dy~=0 then for i=1,self.slots do
+      local x=cx+self.edgeOrder[i]
+      if dx==0 or x~=cx+dx*self.radius then self:enqueue(x,cy+dy*self.radius) end
+    end end
+  end
+  self.cx,self.cy=cx,cy
+end
+function World:hasPending() return self.first~=0 end
+-- Budget remains in columns for harness compatibility; chunks are never partial.
+function World:step(budget,upload)
+  local completed=0
+  while budget>=256 and self.first~=0 do
+    local chunk=self.chunks[self.first]
+    local cx,cy=chunk.requestX,chunk.requestY
+    self:removeRequest(chunk)
+    chunk=self:generateChunk(cx,cy)
+    if upload then upload(chunk) end
+    budget=budget-256;completed=completed+1
+  end
+  return completed
+end
+function World:initGraphics(x,y,format)
+  self.size=self.slots*16
+  self.format=format or 'r16f'
+  assert(self.format=='r16f' or self.format=='r32f','Height format must be r16f or r32f')
+  self.imageData=love.image.newImageData(self.size,self.size,self.format)
+  self.texture=love.graphics.newImage(self.imageData,{linear=true,mipmaps=false})
+  self.texture:setFilter('nearest','nearest')
+  self.tile=love.image.newImageData(16,16,self.format)
+  self.maxData=love.image.newImageData(self.slots,self.slots,self.format)
+  self.maxTexture=love.graphics.newImage(self.maxData,{linear=true,mipmaps=false})
+  self.maxTexture:setFilter('nearest','nearest')
+  self.maxTile=love.image.newImageData(1,1,self.format)
+  local half=self.format=='r16f'
+  local pixels=ffi.cast(half and 'uint16_t*' or 'float*',self.tile:getFFIPointer())
+  local maxPixel=ffi.cast(half and 'uint16_t*' or 'float*',self.maxTile:getFFIPointer())
+  local encoded=ffi.new(half and 'uint16_t[2049]' or 'float[2049]')
+  for h=1,2048 do
+    local _,e=math.frexp(h)
+    encoded[h]=half and (e+14)*1024+(h/2^(e-1)-1)*1024 or h
+  end
+  self.upload=function(chunk)
+    for i=0,255 do pixels[i]=encoded[chunk.data[i]] end
+    local x,y=(chunk.x%self.slots)*16,(chunk.y%self.slots)*16
+    self.imageData:paste(self.tile,x,y,0,0,16,16) -- Preserve CPU source for display-mode reload.
+    self.texture:replacePixels(self.tile,1,1,x,y)
+    maxPixel[0]=encoded[chunk.maximum]
+    self.maxData:paste(self.maxTile,x/16,y/16,0,0,1,1)
+    self.maxTexture:replacePixels(self.maxTile,1,1,x/16,y/16)
+  end
+  self:request(x,y)
+  for i=1,#self.chunks do
+    local chunk=self.chunks[i]
+    if math.abs(chunk.x-self.cx)<=self.radius and math.abs(chunk.y-self.cy)<=self.radius then self.upload(chunk) end
+  end
+  self:step(self.slots^2*256,self.upload)
+end
+function World:update(x,y)
+  self:request(x,y)
+  if self.first==0 then return end
+  local deadline=love.timer.getTime()+0.00075
+  local uploads=0
+  repeat
+    uploads=uploads+self:step(256,self.upload)
+  until self.first==0 or uploads>=2 or love.timer.getTime()>=deadline
+end
+return World

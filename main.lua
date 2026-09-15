@@ -1,33 +1,39 @@
--- Heightfield GPU raycaster with true perspective pitch.
+-- XY DDA raycaster with heightfield fast path and sparse vertical solid spans.
 
-local level = require("levels")[1]
-
+local World = require("world")
 -- ─────────────────── global configuration ───────────────────────────
 local CONFIG = {
   -- Camera & Projection
   FOV_DEG          = 90.0,             -- Easy horizontal FOV tweak (in degrees)
-  CAM_HEIGHT       = 0.5,              -- Player eye offset from floor
+  PLAYER_HEIGHT    = 1.80,              -- Physical head stays above camera
+  CAM_HEIGHT       = 1.62,              -- Player eye offset from floor
   MAX_PITCH        = math.rad(89.5),   -- Vertical look clamp
-  VIEW_DIST        = 16.0,             -- Max raycast distance (fog cutoff)
-  RENDER_W         = 320,             -- Fixed internal resolution; 4:3 CRT presentation
-  RENDER_H         = 240,
-  VSYNC            = true,            -- Synchronize presentation to display refresh
-  MAX_FPS          = 333,              -- VSync-off limit; 0 = uncapped
-  
-  CRT_ENABLED      = true,             -- CRT post-processing; F2 toggles at runtime
+  VIEW_DIST        = 556.0,             -- Max raycast distance (visibility cutoff)
+  VSYNC            = false,            -- Synchronize presentation to display refresh
+  MAX_FPS          = 0,              -- VSync-off limit; 0 = uncapped
+
+  DEBUG_ENABLED    = false,             -- Debug HUD; F3 toggles at runtime
+
+  CAVES            = true,            -- Cached volumetric caves / entrances
+  SEED             = 1337,            -- Deterministic terrain seed
+  SEA_LEVEL        = 48,
+  OCEAN_FLOOR      = 8,
+  CONTINENT_SCALE  = 2048,            -- Blocks between continental controls
+  DETAIL_HEIGHT    = 1.25,            -- 0 preserves macro geography without small detail
 
   -- Jump & Physics
   GRAVITY          = 18.0,             -- Downward acceleration
   JUMP_PEAK_HEIGHT = 1.2,              -- Peak jump height above launch floor (in units)
   GROUND_EPS       = 1e-3,             -- Surface contact threshold
   PLAYER_RADIUS    = 0.20,             -- Bounding box for wall collision
+  STEP_SMOOTH_TIME = 0.06,             -- Visual step easing in seconds; 0 disables
   MAX_STEP_HEIGHT  = 0.25,             -- Highest surface change that can be walked onto
   FIXED_DT         = 1.0 / 120.0,      -- Deterministic physics simulation step
   MAX_FRAME_DT     = 0.1,              -- Limit catch-up work after long frame stalls
-  
+
   -- Responsive FPS Movement
-  MOVE_SPEED       = 3.2,              -- Base movement speed
-  SPRINT_SPEED     = 5.0,              -- Sprint speed (Shift)
+  MOVE_SPEED       = 25,              -- Base movement speed
+  SPRINT_SPEED     = 50.0,              -- Sprint speed (Shift)
   ACCEL_GROUND     = 28.0,             -- Ground responsiveness
   ACCEL_AIR        = 18.0,             -- Mid-air steering control
   FRICTION         = 22.0,             -- Ground stop factor
@@ -37,30 +43,26 @@ local CONFIG = {
 -- Compute jump launch velocity derived from peak height: v = sqrt(2 * g * h)
 local jumpVelocity = math.sqrt(2.0 * CONFIG.GRAVITY * CONFIG.JUMP_PEAK_HEIGHT)
 
--- ─────────────────── wall type mapping ──────────────────────────────
-local WALL_HEIGHTS = { [1] = 1, [2] = 2, [3] = 3 }
-local MAX_WALL_UNITS = 1
-for _, h in pairs(WALL_HEIGHTS) do
-  if h > MAX_WALL_UNITS then MAX_WALL_UNITS = h end
-end
-
 -- Horizontal traversal crosses at most sqrt(2) grid planes per world-space unit.
 local MAX_DDA_STEPS = math.ceil(CONFIG.VIEW_DIST * math.sqrt(2)) + 2
 
 -- ─────────────────── state variables ────────────────────────────────
+local world = World.new(CONFIG.SEED, CONFIG.VIEW_DIST, {caves=CONFIG.CAVES,SEA_LEVEL=CONFIG.SEA_LEVEL,
+  OCEAN_FLOOR=CONFIG.OCEAN_FLOOR, CONTINENT_SCALE=CONFIG.CONTINENT_SCALE, DETAIL_HEIGHT=CONFIG.DETAIL_HEIGHT})
 local SCR_W, SCR_H = 0, 0
-local RENDER_W, RENDER_H = CONFIG.RENDER_W, CONFIG.RENDER_H
-local renderScale, viewportX, viewportY = 1, 0, 0
+local RENDER_W, RENDER_H = 0, 0
 local renderCanvas = nil
-local crtShader = nil
 local px, py, rot, pitch = 3.5, 3.5, 0, 0
-local eyeHeight = CONFIG.CAM_HEIGHT
+local eyeHeight = world:height(math.floor(px), math.floor(py)) + CONFIG.CAM_HEIGHT
 local yVel = 0
+local flying, lastSpacePress = false, -math.huge
 local velX, velY = 0, 0
-local currentFloor = 0
+local currentFloor = eyeHeight - CONFIG.CAM_HEIGHT
 local physicsAccumulator = 0
 local previousPx, previousPy = px, py
 local previousEyeHeight = eyeHeight
+-- Render-only correction for grounded step-ups; never used by collision.
+local eyeStepOffset, previousEyeStepOffset = 0, 0
 local lastRot, lastPitch = nil, nil
 local hud, hudElapsed = nil, math.huge
 
@@ -145,223 +147,13 @@ end
 
 -- Preallocated tables to eliminate per-frame GC allocations
 local camPos     = { 0, 0, 0 }
+local cacheOffset = { 0, 0 }
 local camForward = { 0, 0, 0 }
 local camRight   = { 0, 0, 0 }
 local camUp      = { 0, 0, 0 }
 
--- ─────────────────── textures & level map ───────────────────────────
-local bricks = love.graphics.newImage("bricks.png")
-bricks:setFilter("nearest", "nearest")
-bricks:setWrap("repeat", "repeat")
-
-local ground = love.graphics.newImage("ground.png")
-ground:setFilter("nearest", "nearest")
-ground:setWrap("repeat", "repeat")
-
-local blinkSkybox = love.graphics.newImage("skybox/blink/cubemap.png")
-blinkSkybox:setFilter("linear", "linear")
-blinkSkybox:setWrap("clamp", "clamp")
-local skyboxFaceSize = blinkSkybox:getWidth() / 4
-
-local function createLevelTexture()
-  if type(level) ~= "table" or #level == 0 or type(level[1]) ~= "table" or #level[1] == 0 then
-    error("Level must be a non-empty rectangular table")
-  end
-
-  local levelW, levelH = #level, #level[1]
-  local warnedTypes = {}
-  for x = 1, levelW do
-    if type(level[x]) ~= "table" or #level[x] ~= levelH then
-      error(("Level is not rectangular: column %d has height %d, expected %d")
-        :format(x, type(level[x]) == "table" and #level[x] or 0, levelH))
-    end
-    for y = 1, levelH do
-      local wt = level[x][y]
-      local warningKey = tostring(wt)
-      if wt ~= 0 and WALL_HEIGHTS[wt] == nil and not warnedTypes[warningKey] then
-        print(("Warning: undefined wall type %s at level cell (%d, %d); treating it as empty")
-          :format(warningKey, x, y))
-        warnedTypes[warningKey] = true
-      end
-    end
-  end
-
-  local imageData = love.image.newImageData(levelW, levelH)
-  for x = 1, levelW do
-    for y = 1, levelH do
-      local wt = level[x][y] or 0
-      local height = WALL_HEIGHTS[wt] or 0
-      imageData:setPixel(x - 1, y - 1, height / MAX_WALL_UNITS, 0, 0, 1)
-    end
-  end
-  local texture = love.graphics.newImage(imageData)
-  texture:setFilter("nearest", "nearest")
-  texture:setWrap("clamp", "clamp")
-  imageData:release()
-  return texture, levelW, levelH
-end
-
-local levelTexture, levelW, levelH = createLevelTexture()
-
--- ─────────────────── heightfield DDA shader ─────────────────────────
-local raycastShader = love.graphics.newShader([[
-extern vec3 camPos;
-extern vec3 camForward;
-extern vec3 camRight;
-extern vec3 camUp;
-extern float tanHalfHFOV;
-extern float tanHalfVFOV;
-
-extern Image wallTex;
-extern Image floorTex;
-extern Image levelTex;
-extern Image skyboxTex;
-extern vec2  levelSize;
-extern float maxUnits;
-extern float viewDist;
-extern float skyboxFaceSize;
-
-vec4 sampleSkybox(vec3 worldDir) {
-  // Cubemap axes: +X right, +Y top, +Z front.
-  vec3 dir = vec3(worldDir.y, worldDir.z, worldDir.x);
-  vec3 ad = abs(dir);
-  vec2 faceUV;
-  vec2 atlasCell;
-
-  if (ad.x >= ad.y && ad.x >= ad.z) {
-    if (dir.x > 0.0) {
-      faceUV = vec2(-dir.z, -dir.y) / ad.x;
-      atlasCell = vec2(2.0, 1.0); // right
-    } else {
-      faceUV = vec2(dir.z, -dir.y) / ad.x;
-      atlasCell = vec2(0.0, 1.0); // left
-    }
-  } else if (ad.y >= ad.z) {
-    if (dir.y > 0.0) {
-      faceUV = vec2(dir.x, dir.z) / ad.y;
-      atlasCell = vec2(1.0, 0.0); // top
-    } else {
-      faceUV = vec2(dir.x, -dir.z) / ad.y;
-      atlasCell = vec2(1.0, 2.0); // bottom
-    }
-  } else {
-    if (dir.z > 0.0) {
-      faceUV = vec2(dir.x, -dir.y) / ad.z;
-      atlasCell = vec2(1.0, 1.0); // front
-    } else {
-      faceUV = vec2(-dir.x, -dir.y) / ad.z;
-      atlasCell = vec2(3.0, 1.0); // back
-    }
-  }
-
-  faceUV = faceUV * 0.5 + 0.5;
-  float inset = 0.5 / skyboxFaceSize;
-  faceUV = clamp(faceUV, vec2(inset), vec2(1.0 - inset));
-  return Texel(skyboxTex, (atlasCell + faceUV) / vec2(4.0, 3.0));
-}
-
-float getCellHeight(vec2 cell) {
-  if (cell.x < 0.0 || cell.x >= levelSize.x || cell.y < 0.0 || cell.y >= levelSize.y) {
-    return 0.0;
-  }
-  vec2 uv = (cell + vec2(0.5)) / levelSize;
-  return floor(Texel(levelTex, uv).r * maxUnits + 0.5);
-}
-
-vec4 effect(vec4 color, Image dummy, vec2 tc, vec2 sc)
-{
-  vec2 ndc = (sc / love_ScreenSize.xy) * 2.0 - 1.0;
-  ndc.y = -ndc.y;
-
-  vec3 rayDir = normalize(camForward +
-                          camRight * (ndc.x * tanHalfHFOV) +
-                          camUp    * (ndc.y * tanHalfVFOV));
-
-  // Columns are solid below their tops: only XY grid boundaries need DDA.
-  if (camPos.z >= maxUnits && rayDir.z >= 0.0) return sampleSkybox(rayDir);
-
-  vec2 mapPos = floor(camPos.xy);
-  vec2 deltaDist = 1.0 / max(abs(rayDir.xy), vec2(1e-8));
-  vec2 stepDir = sign(rayDir.xy);
-  vec2 sideDist = (stepDir * (mapPos - camPos.xy) + stepDir * 0.5 + 0.5) * deltaDist;
-
-  float groundDist = rayDir.z < 0.0 ? -camPos.z / rayDir.z : viewDist + 1.0;
-  bool hit = groundDist >= 0.0 && groundDist <= viewDist;
-  float hitDist = hit ? groundDist : viewDist;
-  bool isFloorGround = hit;
-  vec3 mask = vec3(0.0, 0.0, 1.0);
-  vec3 entryMask = vec3(0.0);
-  float entryDist = 0.0;
-
-  for (int i = 0; i < ]] .. MAX_DDA_STEPS .. [[; ++i) {
-    float exitDist = min(sideDist.x, sideDist.y);
-    float cellH = getCellHeight(mapPos);
-    float entryZ = camPos.z + rayDir.z * entryDist;
-
-    if (cellH > 0.0) {
-      // Match voxel face priority when a downward ray meets a top/side edge.
-      if (entryMask.x + entryMask.y > 0.0 &&
-          (entryZ < cellH || (entryZ == cellH && rayDir.z < 0.0))) {
-        hit = true;
-        hitDist = entryDist;
-        mask = entryMask;
-        isFloorGround = false;
-        break;
-      }
-      if (rayDir.z < 0.0) {
-        float topDist = (cellH - camPos.z) / rayDir.z;
-        if (topDist >= entryDist && topDist <= min(exitDist, hitDist)) {
-          hit = true;
-          hitDist = topDist;
-          mask = vec3(0.0, 0.0, 1.0);
-          isFloorGround = false;
-          break;
-        }
-      }
-    }
-
-    if (exitDist >= hitDist) break;
-    entryDist = exitDist;
-    if (sideDist.x < sideDist.y) {
-      sideDist.x += deltaDist.x;
-      mapPos.x += stepDir.x;
-      entryMask = vec3(1.0, 0.0, 0.0);
-    } else {
-      sideDist.y += deltaDist.y;
-      mapPos.y += stepDir.y;
-      entryMask = vec3(0.0, 1.0, 0.0);
-    }
-    if (rayDir.z >= 0.0 && camPos.z + rayDir.z * entryDist >= maxUnits) break;
-  }
-
-  if (!hit) {
-    return sampleSkybox(rayDir);
-  }
-
-  vec3 hitPoint = camPos + rayDir * hitDist;
-  vec4 texCol;
-  float shade = 1.0;
-
-  if (mask.z > 0.5) {
-    vec2 floorUV = fract(hitPoint.xy);
-    texCol = Texel(floorTex, floorUV);
-    shade = isFloorGround ? 0.75 : 0.95;
-  } else {
-    vec2 wallUV;
-    if (mask.x > 0.5) {
-      wallUV = vec2(hitPoint.y, 1.0 - hitPoint.z);
-      shade = 0.85;
-    } else {
-      wallUV = vec2(hitPoint.x, 1.0 - hitPoint.z);
-      shade = 0.70;
-    }
-    texCol = Texel(wallTex, fract(wallUV));
-  }
-
-  float fog = clamp(1.0 - (hitDist / viewDist), 0.0, 1.0);
-  return vec4(texCol.rgb * shade * fog, 1.0);
-}
-]])
+local raycastShader = love.graphics.newShader("#define MAX_DDA_STEPS " .. MAX_DDA_STEPS .. "\n" ..
+  assert(love.filesystem.read("raycast.glsl")))
 
 -- ─────────────────── collision handling ────────────────────────────
 local function getHighestFloorUnder(x, y, minHeight, maxHeight)
@@ -373,12 +165,11 @@ local function getHighestFloorUnder(x, y, minHeight, maxHeight)
 
   minHeight = minHeight or -math.huge
   maxHeight = maxHeight or math.huge
-  local maxH = (minHeight <= 0 and maxHeight >= 0) and 0 or nil
+  local maxH = nil
   for ix = minX, maxX do
     for iy = minY, maxY do
-      if ix >= 1 and ix <= levelW and iy >= 1 and iy <= levelH then
-        local wt = level[ix][iy] or 0
-        local wh = WALL_HEIGHTS[wt] or 0
+      local wh = world:floorBelow(ix - 1, iy - 1, maxHeight + CONFIG.GROUND_EPS)
+      if wh then
         if wh >= minHeight - CONFIG.GROUND_EPS and
            wh <= maxHeight + CONFIG.GROUND_EPS and
            (maxH == nil or wh > maxH) then
@@ -397,20 +188,22 @@ local function isPointColliding(x, y, footH, canStep)
   local minY = math.floor(y - r) + 1
   local maxY = math.floor(y + r) + 1
 
+  local foot=footH
+  if canStep then foot=math.max(foot,getHighestFloorUnder(x,y,-math.huge,currentFloor+CONFIG.MAX_STEP_HEIGHT) or foot) end
   for ix = minX, maxX do
     for iy = minY, maxY do
-      if ix >= 1 and ix <= levelW and iy >= 1 and iy <= levelH then
-        local wt = level[ix][iy] or 0
-        local wh = WALL_HEIGHTS[wt] or 0
-        -- Airborne players cannot step using the height of their old support.
-        local tooHighToStep = not canStep or wh > currentFloor + CONFIG.MAX_STEP_HEIGHT + CONFIG.GROUND_EPS
-        if wh > 0 and tooHighToStep and footH < (wh - CONFIG.GROUND_EPS) then
-          return true
-        end
-      end
+      if world:overlaps(ix-1,iy-1,foot+CONFIG.GROUND_EPS,foot+CONFIG.PLAYER_HEIGHT) then return true end
     end
   end
   return false
+end
+
+local function getLowestCeiling(x,y,head)
+  local r=CONFIG.PLAYER_RADIUS;local ceiling=math.huge
+  for ix=math.floor(x-r),math.floor(x+r) do for iy=math.floor(y-r),math.floor(y+r) do
+    ceiling=math.min(ceiling,world:ceilingAbove(ix,iy,head+CONFIG.PLAYER_HEIGHT-CONFIG.CAM_HEIGHT-CONFIG.GROUND_EPS) or math.huge)
+  end end
+  return ceiling-(CONFIG.PLAYER_HEIGHT-CONFIG.CAM_HEIGHT)
 end
 
 local function move(dx, dy, canStep)
@@ -437,32 +230,33 @@ local function move(dx, dy, canStep)
   end
 end
 
-local function updateCrtShader()
-  if not CONFIG.CRT_ENABLED then return end
-  if not crtShader then crtShader = love.graphics.newShader("crt-lottes-fast.glsl") end
-  crtShader:send("Texture", renderCanvas)
-  crtShader:send("InputSize", { RENDER_W, RENDER_H })
-  local pixelScale = renderScale * love.graphics.getDPIScale()
-  crtShader:send("OutputSize", { RENDER_W * pixelScale, RENDER_H * pixelScale })
-end
-
-function love.keypressed(key)
-  if key == "f2" then
-    CONFIG.CRT_ENABLED = not CONFIG.CRT_ENABLED
-    updateCrtShader()
+function love.keypressed(key, _, isrepeat)
+  if isrepeat then return end
+  if key == "space" then
+    local now = love.timer.getTime()
+    if now - lastSpacePress <= 0.3 then
+      flying = not flying
+      yVel, eyeStepOffset, previousEyeStepOffset = 0, 0, 0
+      lastSpacePress = -math.huge
+    else
+      lastSpacePress = now
+    end
+  elseif key == "f3" then
+    CONFIG.DEBUG_ENABLED = not CONFIG.DEBUG_ENABLED
+    performance.lastCpuClock = os.clock()
+    performance.sampleElapsed = 0
+    hudElapsed = math.huge
   end
 end
 
 -- ─────────────────── viewport update ────────────────────────────────
 local function updateProjection(w, h)
   SCR_W, SCR_H = w, h
-  RENDER_W, RENDER_H = CONFIG.RENDER_W, CONFIG.RENDER_H
-  renderScale = math.min(SCR_W / RENDER_W, SCR_H / RENDER_H)
-  viewportX, viewportY = (SCR_W - RENDER_W * renderScale) / 2, (SCR_H - RENDER_H * renderScale) / 2
+  RENDER_W, RENDER_H = love.graphics.getPixelDimensions()
 
   if not renderCanvas or renderCanvas:getWidth() ~= RENDER_W or renderCanvas:getHeight() ~= RENDER_H then
     if renderCanvas then renderCanvas:release() end
-    renderCanvas = love.graphics.newCanvas(RENDER_W, RENDER_H, { msaa = 0, dpiscale = 1 })
+    renderCanvas = love.graphics.newCanvas(RENDER_W, RENDER_H, { format="rgba8", msaa=0, dpiscale=1 })
     renderCanvas:setFilter("nearest", "nearest")
   end
 
@@ -472,7 +266,6 @@ local function updateProjection(w, h)
 
   raycastShader:send("tanHalfHFOV", tanHalfHFOV)
   raycastShader:send("tanHalfVFOV", tanHalfVFOV)
-  updateCrtShader()
 end
 
 function love.resize(w, h)
@@ -489,22 +282,19 @@ function love.load()
     msaa = 0
   })
   love.mouse.setRelativeMode(true)
-  love.graphics.setBackgroundColor(0, 0, 0)
+  love.graphics.setBackgroundColor(0.48, 0.72, 0.92, 1)
   local font = love.graphics.newFont("Px437_IBM_VGA_8x16.ttf", 16)
   font:setFilter("nearest", "nearest")
   love.graphics.setFont(font)
 
   updateProjection(love.graphics.getDimensions())
 
-  -- Static uniform binding
-  raycastShader:send("wallTex", bricks)
-  raycastShader:send("floorTex", ground)
-  raycastShader:send("levelTex", levelTexture)
-  raycastShader:send("skyboxTex", blinkSkybox)
-  raycastShader:send("levelSize", { levelW, levelH })
-  raycastShader:send("maxUnits", MAX_WALL_UNITS)
+  world:initGraphics(px, py)
+  raycastShader:send("heightTex", world.texture)
+  raycastShader:send("chunkMaxTex", world.maxTexture)
+  raycastShader:send("cacheSize", world.size)
+  raycastShader:send("maxHeight", world.maxHeight)
   raycastShader:send("viewDist", CONFIG.VIEW_DIST)
-  raycastShader:send("skyboxFaceSize", skyboxFaceSize)
 end
 
 function love.mousemoved(_, _, dx, dy)
@@ -513,15 +303,21 @@ function love.mousemoved(_, _, dx, dy)
 end
 
 local function updatePhysics(dt)
+  eyeStepOffset = CONFIG.STEP_SMOOTH_TIME > 0 and eyeStepOffset * math.exp(-dt / CONFIG.STEP_SMOOTH_TIME) or 0
   -- Resolve walkable support without considering taller neighboring walls.
   local footHeight = eyeHeight - CONFIG.CAM_HEIGHT
   local grounded = math.abs(footHeight - currentFloor) <= CONFIG.GROUND_EPS and yVel <= 0
   local walkableFloor = getHighestFloorUnder(
     px, py, -math.huge, currentFloor + CONFIG.MAX_STEP_HEIGHT
-  ) or 0
+  )
 
-  if grounded and walkableFloor > currentFloor + CONFIG.GROUND_EPS then
+  if flying then
+    grounded = false
+  elseif grounded and walkableFloor == nil then
+    grounded = false
+  elseif grounded and walkableFloor > currentFloor + CONFIG.GROUND_EPS then
     currentFloor = walkableFloor
+    if CONFIG.STEP_SMOOTH_TIME > 0 then eyeStepOffset = eyeStepOffset + eyeHeight - (CONFIG.CAM_HEIGHT + currentFloor) end
     eyeHeight = CONFIG.CAM_HEIGHT + currentFloor
   elseif grounded and walkableFloor < currentFloor - CONFIG.GROUND_EPS then
     -- The player walked off a ledge. Keep their height and begin falling.
@@ -549,9 +345,9 @@ local function updatePhysics(dt)
   end
 
   local shift = love.keyboard.isDown("lshift", "rshift")
-  local targetSpeed = (grounded and shift) and CONFIG.SPRINT_SPEED or CONFIG.MOVE_SPEED
-  local currentAccel = grounded and CONFIG.ACCEL_GROUND or CONFIG.ACCEL_AIR
-  local currentDrag  = grounded and CONFIG.FRICTION or CONFIG.AIR_DRAG
+  local targetSpeed = ((grounded or flying) and shift) and CONFIG.SPRINT_SPEED or CONFIG.MOVE_SPEED
+  local currentAccel = (grounded or flying) and CONFIG.ACCEL_GROUND or CONFIG.ACCEL_AIR
+  local currentDrag  = (grounded or flying) and CONFIG.FRICTION or CONFIG.AIR_DRAG
 
   -- Linear drag simplifies to one shared multiplier; no length or division needed.
   local damping = math.max(1 - currentDrag * dt, 0)
@@ -571,13 +367,26 @@ local function updatePhysics(dt)
   local oldPx, oldPy = px, py
   move(velX * dt, velY * dt, grounded)
 
+  if flying then
+    local vertical = (love.keyboard.isDown("space") and 1 or 0) -
+                     (love.keyboard.isDown("lctrl", "rctrl") and 1 or 0)
+    currentFloor = getHighestFloorUnder(px, py, -math.huge, eyeHeight-CONFIG.CAM_HEIGHT+CONFIG.GROUND_EPS) or 0
+    local ceiling=getLowestCeiling(px,py,eyeHeight)
+    eyeHeight = math.min(ceiling,math.max(currentFloor + CONFIG.CAM_HEIGHT, eyeHeight + vertical * targetSpeed * dt))
+    yVel = 0
+    return
+  end
+
   -- Recheck support only after movement changes the player footprint.
   if grounded and (px ~= oldPx or py ~= oldPy) then
     walkableFloor = getHighestFloorUnder(
       px, py, -math.huge, currentFloor + CONFIG.MAX_STEP_HEIGHT
-    ) or 0
-    if walkableFloor > currentFloor + CONFIG.GROUND_EPS then
+    )
+    if walkableFloor == nil then
+      grounded = false
+    elseif walkableFloor > currentFloor + CONFIG.GROUND_EPS then
       currentFloor = walkableFloor
+      if CONFIG.STEP_SMOOTH_TIME > 0 then eyeStepOffset = eyeStepOffset + eyeHeight - (CONFIG.CAM_HEIGHT + currentFloor) end
       eyeHeight = CONFIG.CAM_HEIGHT + currentFloor
     elseif walkableFloor < currentFloor - CONFIG.GROUND_EPS then
       currentFloor = walkableFloor
@@ -592,6 +401,10 @@ local function updatePhysics(dt)
   else
     yVel = yVel - CONFIG.GRAVITY * dt
     local nextFootHeight = previousFootHeight + yVel * dt
+    if yVel>0 then
+      local ceiling=getLowestCeiling(px,py,eyeHeight)
+      if nextFootHeight+CONFIG.CAM_HEIGHT>ceiling then nextFootHeight=ceiling-CONFIG.CAM_HEIGHT;yVel=0 end
+    end
 
     -- Only a downward crossing can land on a surface, including a tall block.
     local landingFloor = nil
@@ -610,13 +423,15 @@ local function updatePhysics(dt)
 end
 
 function love.update(dt)
+  world:update(px, py)
   hudElapsed = hudElapsed + dt
-  updatePerformanceStats(dt)
+  if CONFIG.DEBUG_ENABLED then updatePerformanceStats(dt) end
   physicsAccumulator = physicsAccumulator + math.min(dt, CONFIG.MAX_FRAME_DT)
 
   while physicsAccumulator >= CONFIG.FIXED_DT do
     previousPx, previousPy = px, py
     previousEyeHeight = eyeHeight
+    previousEyeStepOffset = eyeStepOffset
     updatePhysics(CONFIG.FIXED_DT)
     physicsAccumulator = physicsAccumulator - CONFIG.FIXED_DT
   end
@@ -631,7 +446,8 @@ function love.draw()
   local renderPx = previousPx + (px - previousPx) * interpolationAlpha
   local renderPy = previousPy + (py - previousPy) * interpolationAlpha
   local renderEyeHeight = previousEyeHeight +
-                          (eyeHeight - previousEyeHeight) * interpolationAlpha
+                          (eyeHeight - previousEyeHeight) * interpolationAlpha +
+                          previousEyeStepOffset + (eyeStepOffset - previousEyeStepOffset) * interpolationAlpha
   if rot ~= lastRot or pitch ~= lastPitch then
     local cp, sp = math.cos(pitch), math.sin(pitch)
     local cr, sr = math.cos(rot), math.sin(rot)
@@ -644,21 +460,24 @@ function love.draw()
     lastRot, lastPitch = rot, pitch
   end
 
-  if camPos[1] ~= renderPx or camPos[2] ~= renderPy or camPos[3] ~= renderEyeHeight then
-    camPos[1], camPos[2], camPos[3] = renderPx, renderPy, renderEyeHeight
-    raycastShader:send("camPos", camPos)
-  end
+  -- Keep GPU coordinates near zero, even far from spawn.
+  local originX, originY = math.floor(renderPx / 16) * 16, math.floor(renderPy / 16) * 16
+  camPos[1], camPos[2], camPos[3] = renderPx - originX, renderPy - originY, renderEyeHeight
+  cacheOffset[1], cacheOffset[2] = originX % world.size, originY % world.size
+  raycastShader:send("camPos", camPos)
+  raycastShader:send("cacheOffset", cacheOffset)
 
   love.graphics.setCanvas(renderCanvas)
   love.graphics.setBlendMode("replace") -- Full-screen shader overwrites every pixel.
   love.graphics.setColor(1, 1, 1, 1)
+  world:bindSpans(raycastShader)
   love.graphics.setShader(raycastShader)
   love.graphics.rectangle("fill", 0, 0, RENDER_W, RENDER_H)
   love.graphics.setShader()
   love.graphics.setBlendMode("alpha")
 
   -- Rebuild text at 10 Hz instead of formatting and laying it out every frame.
-  if hudElapsed >= 0.1 then
+  if CONFIG.DEBUG_ENABLED and hudElapsed >= 0.1 then
     hudElapsed = 0
     if not hud then hud = love.graphics.newText(love.graphics.getFont()) end
     hud:clear()
@@ -682,13 +501,15 @@ function love.draw()
       math.sqrt(velX * velX + velY * velY)
     ), 0, 100)
   end
-  love.graphics.draw(hud, 10, 10)
+  if CONFIG.DEBUG_ENABLED then
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(hud, 10, 10)
+  end
+
   love.graphics.setCanvas()
 
-  love.graphics.clear(0, 0, 0, 1)
   love.graphics.setBlendMode("replace")
-  if CONFIG.CRT_ENABLED then love.graphics.setShader(crtShader) end
-  love.graphics.draw(renderCanvas, viewportX, viewportY, 0, renderScale, renderScale)
+  love.graphics.draw(renderCanvas, 0, 0, 0, SCR_W / RENDER_W, SCR_H / RENDER_H)
   love.graphics.setShader()
   love.graphics.setBlendMode("alpha")
 end

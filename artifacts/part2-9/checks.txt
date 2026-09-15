@@ -1,0 +1,6 @@
+PASS seed 1337: exact regional controls/seams (24 wet edge points), timing/order, chunk/scalar agreement
+PASS seed 42: exact regional controls/seams (0 wet edge points), timing/order, chunk/scalar agreement
+PASS seed 9187: exact regional controls/seams (33 wet edge points), timing/order, chunk/scalar agreement
+PASS: downhill/capped monotone accumulation, 325 river edges, 234 confluences, 14 sinks, 8 ocean outlets
+PASS: gentle beaches, variable beach width, cliff exclusion, grass/dirt, altitude/climate snow and steep rock
+PASS: bulk/scalar fields, custom sparse grids, exact uint16 heights/maxima, seeds/order/eviction/far coordinates, strip requests, queue reversals/teleports, fixed buffer reuse

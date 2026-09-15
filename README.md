@@ -1,64 +1,299 @@
-# Love Raycast Survivor
+# Infinite Voxel World
 
-GPU heightfield raycaster built with LÖVE and Lua. Supports true perspective
-pitch, variable-height walls, jumping, collision, textured surfaces, cubemap
-skybox, and configurable frame pacing.
-
-## Run
-
-Install LÖVE 11.5, then run from project directory:
+Seeded block terrain in LÖVE 11.5: continents, oceans, plains, mountain chains,
+snowy ridgelines, valleys, rivers, lakes, beaches, cliff coasts, underground caves,
+tunnels, chambers, entrances, ravines and rock bridges. Flat terrain
+colors, native display resolution, no image textures or post-processing.
 
 ```sh
 love .
 ```
 
-Game starts fullscreen with captured mouse.
-
-| Control | Action |
-| --- | --- |
-| WASD | Move |
-| Mouse | Look |
-| Shift | Sprint |
-| Space | Jump |
-| F2 | Toggle CRT effect |
-| Escape | Quit |
+WASD moves, mouse looks, Shift sprints, Space jumps, F3 toggles diagnostics,
+Escape quits. Double-tap Space within 0.3 seconds toggles flight. Space rises,
+Ctrl descends, Shift flies faster; release vertical controls to hover. Flight
+retains terrain collision. Water has a visible surface; swimming is not implemented.
 
 ## Configuration
 
-Edit `CONFIG` in `main.lua`, then restart:
+Edit `CONFIG` in `main.lua`:
 
-- `CRT_ENABLED`: enable CRT post-processing at startup; F2 toggles it live.
-- `VSYNC`: synchronize presentation with display refresh.
-- `MAX_FPS`: FPS target when VSync is off; `0` means uncapped.
-- `RENDER_W`, `RENDER_H`: fixed internal resolution, default 320×240 (4:3).
-- `FOV_DEG`, `VIEW_DIST`: field of view and rendering distance.
+- `SEED`: deterministic integer seed, default `1337`.
+- `SEA_LEVEL`: ocean surface height, default `48`.
+- `OCEAN_FLOOR`: deep-ocean elevation, default `8`.
+- `CONTINENT_SCALE`: spacing of macro continent controls, default `2048` blocks.
+- `DETAIL_HEIGHT`: small surface detail amplitude, default `1.25`; `0` retains macro geography.
+- `VIEW_DIST`: visible distance, default `556` blocks.
+- `CAVES`: cached volumetric caves and surface openings, default `true`.
+- `PLAYER_HEIGHT`: physical body height, default `1.80`; camera remains at `1.62`.
+- `CAM_HEIGHT`: player eye height, default `1.62` blocks.
+- `VSYNC`, `MAX_FPS`, `FOV_DEG`: frame pacing and camera settings.
 
-Maps live in `levels.lua`. Current renderer uses first map. Cell values `0`,
-`1`, `2`, and `3` represent empty space and solid columns of corresponding height.
-Walls use `bricks.png`; floors and column tops use `ground.png`.
-Skybox uses `skybox/blink/cubemap.png`.
+`Terrain.defaults` in `terrain.lua` also exposes independent `mountainMask`,
+`ridgeField`, and `terrainVariation` spacing/seed settings. Pass overrides as the
+third argument to `World.new(seed, viewDistance, config)`. Mountain mask thresholds,
+ridge width, and domain warp are independent. Sea/floor heights are integers;
+current generated surfaces stay within 0–254 blocks for compact encoding.
 
-`crt-lottes-fast.glsl` adapts Timothy Lottes’ public-domain CRT filter for LÖVE.
-Scene scales uniformly to fit display, centered with black borders.
-It filters scene and HUD together during upscale. HUD uses 16px
-`Px437_IBM_VGA_8x16.ttf` with nearest filtering. Shader
-constants control scanlines, mask, curvature, and gamma. Disabled CRT skips
-post-processing. Original attribution and license remain in shader file.
+## Surface generation
 
-## Checks
+`geography.lua` evaluates expensive fields only on a coarse global grid. Warped
+continentalness shapes deep ocean → shelf → coastline → plains → inland terrain.
+Warped Voronoi edges form connected ridge networks. Regional masks/amplitude select
+mountain systems. Height combines broad massif uplift (50%), medium shoulders
+(30%) and a narrower crest (8–28%, strongest only in selected areas). A continuous
+1408-block mountain-type field changes massif width, crest sharpness and cliff
+strength. A separate 896-block field compresses upper relative heights and shapes
+intermediate shoulders, with spatially varying knees instead of fixed terraces.
+Small detail decorates this structure rather than determining it.
 
-Run from project directory with LuaJIT installed:
+`regions.lua` caches nine 1024×1024-block macro regions. Drainage uses globally
+jittered nodes approximately 32 blocks apart. Each node drains to its steepest
+lower neighbor. Flow accumulates along this graph; high-flow edges become streams
+and rivers, with width/depth increasing with flow. `river_geometry.lua` samples
+cubic Hermite centerlines about every 2.5 blocks. Shared endpoint tangents follow
+incoming/outgoing drainage directions; modest world-noise displacement softens
+the routing grid without moving drainage endpoints. Lake outlets pass through
+their actual spill node. Rotated, noise-warped lake shorelines replace pure discs.
+Binary sub-block curve samples and stable voxel rounding keep diagonal lips
+identical across region translations.
+`hydrology.lua` follows complete downhill paths, including destinations beyond the
+region halo, and memoizes the result during each macro build. Every ocean-bound
+river uses exactly `SEA_LEVEL`. Inland sinks use their lowest D8 rim as a shared
+`lakeWaterLevel`; tributaries inherit that basin datum. High inland rivers use
+24-block elevation bands for reach metadata. Every receiver path is checked for
+solid support loss, even when upstream/downstream metadata matches. Lakes retain
+their lowest D8 spill node and use its outward downhill neighbor as the outlet;
+the receiver/accumulation graph remains unchanged. Geometry narrows toward that
+outlet or river lip, rather than spilling across an entire perimeter.
+
+River beds are independent of water elevation. Smooth cross-sections deepen toward
+the center, with 2-block edge depth and approximately 3–5 blocks at ordinary river
+centers. Later bank shaping never refills existing wet beds. Inland river shoulders
+sit at least one block above water; a four-block guard in `Terrain:finish()` covers
+interpolated dry shorelines. The existing sea-level
+carving branch and beach material rules remain separate from this inland guard.
+Inland lake/reach levels take priority even when carved beds lie below sea level.
+
+`fluid.lua` builds sparse block geometry once per cached region. `FULL`, `FLOW_1`
+through `FLOW_7`, and `FALLING` describe source water, eighth-block surface steps,
+and continuous falling columns. Upper channels taper gradually toward a lip width
+of `clamp(round(channelWidth * 0.55), 2, 8)` columns. Each lane finds unsupported
+air immediately downstream of its backing column. Falling records never lower
+terrain; explicit terrain floors preserve the backing cliff and fall support.
+Cardinally connected shallow lip records join feeder to every falling lane.
+Landings use
+a deterministic D4 flood, preferring downward outlets before supported horizontal
+routes. Each landing restarts FLOW_1..7; a separate fourteen-step travel bound caps
+secondary falls. One-block drops use eighth-block ramps. Incoming horizontal flow
+merges into existing lakes at their surface level. Different basin surfaces receive
+separating inland banks. No per-frame fluid updates or drainage graph changes occur.
+
+Accumulation saturates at 32 contributing cells, bounding maximum river size.
+A 36-cell halo exceeds the dependency radius plus raster margin. Thus independently
+generated neighboring regions produce identical shared controls, including water
+and river valleys. Accumulation remains capped; destination tracing is not cut off
+by that cap or by region boundaries. Region coordinates do not alter routing or
+introduce artificial outlets.
+
+River carving and erosion-like shaping occur on cached regional controls, spaced
+four blocks apart after coarse routing. No per-block erosion simulation. Macro work
+runs in resumable batches during streaming; the same work runs synchronously during
+initial loading. A 32-block geometry margin supports boundary-consistent landing and bank stencils.
+Region cache uses approximately 16.03 MiB of fixed arrays plus sparse fluid records.
+
+`World:generateChunk(cx, cy)` fills a whole 16×16 chunk using reused buffers and
+scratch interpolation arrays. Chunk loops allocate no objects and perform no
+expensive noise evaluations. Sparse fluid records are indexed by overlapping chunk
+during macro generation, so chunk generation reads only its own records. Returned
+chunk belongs to the ring cache and is valid
+until its slot is reused. `World:height(x, y)` retains the original surface elevation for generation and
+diagnostics. Collision uses `isSolid`, `floorBelow`, `ceilingAbove` and `overlaps`;
+cache misses evaluate the same regional primitives with reused scratch buffers.
+
+Surface IDs are generated once per block:
+
+| ID | Material | Selection |
+| --- | --- | --- |
+| 0 | Grass | Normal dry lowlands and gentle slopes |
+| 1 | Sand | Gentle, variable-width coastal bands and shallow shelves |
+| 2 | Rock | Steep slopes and cliff coasts |
+| 3 | Snow | High, cold terrain; steep faces retain rock |
+| 4 | Dirt | Deep ocean floor; grass block sides also use dirt |
+
+Snow and rock thresholds use domain-warped geology/elevation fields and a coherent
+64-block patch mask, sampled only at 32-block controls. A four-neighbor height
+Laplacian marks convex ridges as more exposed and concave gullies as more sheltered.
+Snow descends into sheltered faces; broad gentle shoulders retain grass or snow.
+Thresholds interpolate through cached grids. Chunk generation reuses buffers and
+classifies materials in a separate pass to keep LuaJIT branch combinations bounded.
+
+Beaches depend on slope and a varying coastal band; ocean cliffs do not receive
+sand merely for being near sea level. Snow elevation varies with regional climate.
+
+## Streaming and rendering
+
+Default settings retain 5,329 chunks (1168×1168 blocks). Offsets sort once. Normal
+movement requests only incoming rows/columns; teleports rebuild from presorted
+offsets. Chunk buffers and queue links are reused. Macro-region misses pause chunk
+work while a resumable build advances; visible terrain remains prefetched.
+
+`chunk.data` stores `uint16_t[256]` heights. `chunk.surface` stores a packed material
+ID and water height: `material * 2048 + waterTop * 8`; zero water means dry.
+The existing `rg16f` GPU image stores `R = terrainHeight * 8 + materialID` and
+`G = waterTop * 8`. R stays at or below 2036; G stores exact eighth-block heights.
+Shader decoding uses rounded R, modulo 8 for material, floor(R / 8) for terrain,
+and G / 8 for water. FFI writes a contiguous upload buffer; one
+16×16 upload plus one chunk-maximum upload updates the GPU, with no per-pixel
+`setPixel()` calls or extra material texture fetch. CPU images mirror uploads for
+window/display-mode reloads. Collision still uses terrain bed height, not water.
+
+Ray traversal skips chunks above their maximum solid/water height. The shader
+selects precomputed flat material colors and intersects water tops, vertical drop
+faces, and terrain beds in ray order. Fractional water tops use four shared corner
+heights and two ray/triangle intersections; compatible full/falling neighbors force
+full-height edges. Eight extra neighbor reads occur only when a ray encounters a
+fractional water surface. Full ocean tops and dry traversal avoid these reads. It does
+not classify procedural terrain. Analytic grid crossings avoid accumulated ray
+rounding differences. GPU coordinates remain near camera for long-distance travel.
+All water surfaces and falling faces share one color. Bed depth and fall height
+do not introduce dark pools or rectangular color boundaries.
+
+## Checks and previews
 
 ```sh
+luajit tools/check_world.lua
+luajit tools/check_surface.lua
+luajit tools/check_water.lua
+luajit tools/check_waterfalls.lua
+luajit tools/check_river_geometry.lua
+luajit tools/check_topology.lua
+python3 tools/check_waterfall_render.py
 luajit tools/check_collision.lua
 luajit tools/check_frame_loop.lua
+python3 tools/check_render.py
+python3 tools/profile_world.py --stage full
+python3 tools/benchmark.py
 ```
 
-Offscreen rendering benchmark requires Python 3 and LÖVE:
+Optional visual tools require Pillow:
 
 ```sh
-python3 tools/benchmark.py
-python3 tools/benchmark.py --baseline /path/to/previous/main.lua
+python3 tools/surface_atlas.py
+python3 tools/surface_views.py
 ```
 
-See [PERFORMANCE.md](PERFORMANCE.md) for measurement details and tradeoffs.
+The survey uses reproducible random seeds `65168`, `716701`, and `452312`.
+[Atlas](artifacts/surface-v2/atlas.png) compares 4096×4096-block maps with and without
+detail. [Flying views](artifacts/surface-v2/flight-views.png) capture actual rendering
+at 768-block QA view distance; normal game distance remains 256.
+
+[PERFORMANCE.md](PERFORMANCE.md) contains feature-by-feature profiles and scope.
+Advanced biome systems, block editing, aquifers and flooded caves remain outside scope.
+
+Part 2.6 checks: `luajit tools/check_flow.lua`, `luajit tools/check_water.lua`,
+`python3 tools/check_render.py`, and `python3 tools/check_flow_render.py`.
+Generated waterfall/landing previews and native flat-versus-sloped timings live in
+`artifacts/part2-6-flow/`; before/after performance is recorded in `PERFORMANCE.md`.
+
+Part 2.7 support-loss, outlet, ramp, boundary and color fixtures are captured in
+`artifacts/part2-7-views/`. A real same-level lake outlet in seed 33 appears in
+`artifacts/part2-7-natural/overview.png` (metadata 76/76; rendered fall 76→63).
+
+Part 2.8 previews: [broad fall](artifacts/part2-8-views/broad-river-40.png),
+[small stream](artifacts/part2-8-views/small-stream-40.png),
+[curved channels](artifacts/part2-8-views/curved-channel-1337.png), and
+[natural outlet](artifacts/part2-8-natural/overview.png).
+Geometry checks cover flow-scaled widths, solid backing, feeder-to-landing water
+occupancy, recessed channels, shared tangents and warped lake outlines. Existing
+boundary/order, packed surface, collision and water-color checks remain active.
+
+Part 2.9 mountain survey: [three-seed aerial atlas](artifacts/part2-9/atlas.png)
+and [actual flying views](artifacts/part2-9/flight-views.png), covering seeds
+65168, 716701 and 452312. Both detail-on and detail-off maps are included.
+Reproduce with `python3 tools/surface_atlas.py --output artifacts/part2-9` and
+`python3 tools/surface_views.py --output artifacts/part2-9` (Pillow required).
+
+Grass–stone transition fix: centered Euclidean gradients replace axis-max slopes,
+and stronger warped geology patches combine with the existing eight-block detail
+field near mountain material transitions. This removes grid-direction bias and
+breaks smooth grass/rock borders into interlocking patches without changing heights
+or adding procedural noise calls per column. [Rendered survey](artifacts/grass-stone/flight-views.png).
+
+## Volumetric terrain (Part 3)
+
+Each column has at most four sorted solid spans, stored as reusable `int16_t[8]`
+records on CPU. Solid membership uses `lo <= z < hi`; floor and ceiling planes
+remain at integer boundaries. Two `RGBA16F` GPU images hold
+`lo0 hi0 lo1 hi1` and `lo2 hi2 lo3 hi3`; unused pairs are `-1`.
+The existing height/material/water image retains the uncarved surface height and
+material. Chunk maxima contain actual surviving solid/water height plus `512`
+when spans are needed. Ordinary chunks retain the heightfield rendering path.
+
+The renderer keeps XY DDA. Inside each complex XY cell it tests the current ray
+segment against a compile-time maximum of four intervals, including floors,
+ceilings and vertical walls. Interior faces use rock; surviving surface tops keep
+their original material. Water stays separate and competes for the nearest hit.
+No Z voxel traversal, density volume or 3D raymarching is used.
+
+`caves.lua` creates a globally deterministic graph on jittered 192-block cells.
+Canonical neighbor edges and diagonal branches form tunnels, junctions and loops;
+large ellipsoidal chambers are sparse among smaller junction rooms. Midpoint bends
+break straight runs. Coarse terrain context selects cliff mouths and descending
+shafts, narrow ravines, and bridges with two exposed ends and a retained center
+roof. Entrances connect to the underground graph. Generation never raises terrain.
+
+Capsules and ellipsoids are spatially binned to affected chunks once per cached
+macro build. Conservative projected-distance tests discard empty diagonal bins.
+Chunk generation computes vertical air intervals analytically, merges their cuts,
+and subtracts them from the base column. Existing coherent eight-block detail
+roughens radii; there are no new per-column noise calls or per-voxel objects.
+Macro cave work yields between primitives. Chunk buffers and cut scratch are reused.
+
+Ocean-floor columns are excluded. Wet columns retain six solid blocks below their
+bed; nearby dry banks use the water datum rather than their potentially much higher
+surface. Low coastal ground has an additional conservative cap. This also prevents
+lateral openings into rivers/lakes. Water-connected caves are not generated.
+
+Cavities smaller than two blocks are discarded; cuts separated by at most one block
+merge. Pathological inputs exceeding four solid spans discard their smallest
+remaining cavities and increment `world.spanOverflowCount` (reduction events, not
+unique coordinates). Four-seed, 4.19-million-column survey recorded zero overflows.
+
+Movement uses the full player footprint against solid spans, supports cave floors
+and ceilings, blocks low overhangs, and handles jump/flight ceiling crossings.
+The camera stays 0.18 blocks below the physical head when pressed against a roof.
+Single-span columns retain a direct height comparison for collision.
+
+At view distance 556, fixed span images use **20.82 MiB GPU**. CPU collision records
+use another **20.82 MiB**, and reloadable CPU image mirrors use **20.82 MiB**.
+The existing height/material/water GPU image uses 5.20 MiB. Fixed storage won the
+render comparison against a compact sparse page atlas; detailed timings and the
+memory tradeoff are in [PERFORMANCE.md](PERFORMANCE.md).
+
+Seed 1337 nearby features (world coordinates):
+
+- Cliff entrance: approximately `(-279, -263, 80)`.
+- Rock bridge: approximately `(-215, 293, 133)`.
+
+[Entrance](artifacts/part3/entrance-1337.png),
+[underground junction/chamber](artifacts/part3/chamber-1337.png),
+[rock bridge](artifacts/part3/arch-1337.png). Additional views cover seeds 716701 and
+452312. Use double-tap Space to fly, Space/Ctrl vertically, and F3 for position.
+
+Focused reproduction:
+
+```sh
+python3 tools/check_spans.py
+luajit tools/check_caves.lua
+luajit tools/check_collision.lua
+python3 tools/cave_views.py
+python3 tools/profile_spans.py
+python3 tools/profile_world.py --distance 556
+```
+
+The single-span GPU gate runs with caves disabled and compares exact framebuffers
+against the preserved pre-span shader, including water, waterfalls, negative
+coordinates, macro boundaries, chunk skipping and reload. Further probes verify
+four-span floors/ceilings, interior walls, upper materials, half-float packing and
+unused `-1` values. Natural cave views also match unaccelerated XY DDA exactly.

@@ -1,0 +1,8 @@
+Generated seed 33 outlet 8,170: metadata 76/76, surface 76/63
+fall flat-reference 1920x1080: median 2.394 ms p99 2.732 ms
+fall sloped 1920x1080: median 2.479 ms p99 2.600 ms
+landing flat-reference 1920x1080: median 1.509 ms p99 1.580 ms
+landing sloped 1920x1080: median 1.603 ms p99 1.666 ms
+overview flat-reference 1920x1080: median 1.828 ms p99 1.956 ms
+overview sloped 1920x1080: median 1.971 ms p99 2.217 ms
+PASS: generated fall/landing/overview agree pixel-for-pixel with unaccelerated sloped rays

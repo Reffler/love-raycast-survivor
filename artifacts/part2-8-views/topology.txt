@@ -1,0 +1,13 @@
+1337	graph	ffffffffd81cabea
+1337	ocean/beach	4a744718
+42	graph	40ad8ed9
+42	ocean/beach	46896b9c
+9187	graph	ffffffff9ec1a0ff
+9187	ocean/beach	fffffffff817e8bd
+5	graph	2922b3c3
+5	ocean/beach	28a74f40
+26	graph	42ba52a6
+26	ocean/beach	ffffffffbaaf50b1
+33	graph	ffffffffe298d279
+33	ocean/beach	ffffffff8f25fdf9
+PASS: exact pre-2.8 drainage arrays and ocean/beach fields

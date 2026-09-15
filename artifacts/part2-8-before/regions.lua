@@ -1,0 +1,200 @@
+-- Canonical global D8 drainage, exact capped accumulation and overlapping halos.
+local ffi,G,H=require('ffi'),require('geography'),require('hydrology')
+local Fluid=require('fluid')
+local R={SIZE=1024,STEP=32,FINE=4,CORE=32,CAP=32,HALO=36,CACHE=9,MARGIN=32}
+R.__index=R
+local N=R.CORE+R.HALO*2+1
+local F=(R.SIZE+R.MARGIN*2)/R.FINE+1
+R.F=F
+function R.new(config)
+  local self=setmetatable({config=config,cache={},clock=0,builds=0,cpuSeconds=0,maxBuildSeconds=0,
+    height=ffi.new('double[?]',N*N),drainHeight=ffi.new('double[?]',N*N),posX=ffi.new('double[?]',N*N),posY=ffi.new('double[?]',N*N),climate=ffi.new('double[?]',N*N),
+    receiver=ffi.new('int[?]',N*N),flow=ffi.new('uint16_t[?]',N*N),nextFlow=ffi.new('uint16_t[?]',N*N)},R)
+  for i=1,R.CACHE do self.cache[i]={x=math.huge,y=math.huge,stamp=0,
+    bed=ffi.new('float[?]',F*F),water=ffi.new('float[?]',F*F),wet=ffi.new('float[?]',F*F),snow=ffi.new('float[?]',F*F)} end
+  self.bytes=R.CACHE*F*F*16+N*N*48
+  return self
+end
+function R:find(rx,ry)
+  for i=1,R.CACHE do local r=self.cache[i];if r.x==rx and r.y==ry then return r end end
+end
+local function lerp(a,b,t) return a+(b-a)*t end
+function R:build(region,rx,ry)
+  local ox,oy=rx*R.SIZE,ry*R.SIZE
+  region.fluid={};region.drops={}
+  local heights,climate,receiver,flow,nextFlow=self.height,self.climate,self.receiver,self.flow,self.nextFlow
+  for y=0,N-1 do
+    for x=0,N-1 do
+      local i=y*N+x
+      heights[i],climate[i]=G.height(self.config,ox+(x-R.HALO)*R.STEP,oy+(y-R.HALO)*R.STEP)
+      flow[i]=heights[i]>self.config.SEA_LEVEL and 1 or 0
+    end
+    coroutine.yield()
+  end
+  local drain,posX,posY=self.drainHeight,self.posX,self.posY
+  for y=0,N-1 do for x=0,N-1 do
+    local gx,gy=rx*R.CORE+x-R.HALO,ry*R.CORE+y-R.HALO
+    local px=gx*32+(G.hash(gx,gy,self.config.seed+1901)-0.5)*19
+    local py=gy*32+(G.hash(gx,gy,self.config.seed+2003)-0.5)*19
+    local fx,fy=px/32,py/32;local ix,iy=math.floor(fx),math.floor(fy)
+    local u,v=fx-ix,fy-iy
+    local k=math.max(0,math.min(N-2,iy-ry*R.CORE+R.HALO))*N+math.max(0,math.min(N-2,ix-rx*R.CORE+R.HALO))
+    local i=y*N+x
+    posX[i],posY[i]=px,py
+    drain[i]=lerp(lerp(heights[k],heights[k+1],u),lerp(heights[k+N],heights[k+N+1],u),v)
+    flow[i]=drain[i]>self.config.SEA_LEVEL and 1 or 0
+  end;coroutine.yield() end
+  for y=0,N-1 do
+    for x=0,N-1 do
+      local i=y*N+x;local best,drop=-1,0
+      if drain[i]>self.config.SEA_LEVEL then
+        for dy=-1,1 do for dx=-1,1 do
+          if (dx~=0 or dy~=0) and x+dx>=0 and x+dx<N and y+dy>=0 and y+dy<N then
+            local j=(y+dy)*N+x+dx;local slope=(drain[i]-drain[j])/math.sqrt((posX[i]-posX[j])^2+(posY[i]-posY[j])^2)
+            if slope>drop then best,drop=j,slope end
+          end
+        end end
+      end
+      receiver[i]=best
+    end
+    coroutine.yield()
+  end
+  -- CAP iterations are sufficient: an unresolved path already contributes CAP cells.
+  -- Core plus raster margin lies more than CAP+1 cells from array boundary.
+  if self.config.rivers then
+    for pass=1,R.CAP do
+      for i=0,N*N-1 do nextFlow[i]=drain[i]>self.config.SEA_LEVEL and 1 or 0 end
+      for y=0,N-1 do
+        for x=0,N-1 do local i=y*N+x;local j=receiver[i]
+          if j>=0 then nextFlow[j]=math.min(R.CAP,nextFlow[j]+flow[i]) end
+        end
+        if y%8==7 then coroutine.yield() end
+      end
+      flow,nextFlow=nextFlow,flow
+    end
+  end
+  for y=0,F-1 do
+    local gy=(y*R.FINE-R.MARGIN)/R.STEP;local iy=math.floor(gy)+R.HALO;local v=gy-math.floor(gy)
+    for x=0,F-1 do
+      local gx=(x*R.FINE-R.MARGIN)/R.STEP;local ix=math.floor(gx)+R.HALO;local u=gx-math.floor(gx)
+      local k=iy*N+ix;local i=y*F+x
+      region.bed[i]=lerp(lerp(heights[k],heights[k+1],u),lerp(heights[k+N],heights[k+N+1],u),v)
+      region.snow[i]=lerp(lerp(climate[k],climate[k+1],u),lerp(climate[k+N],climate[k+N+1],u),v)
+      region.water[i]=0;region.wet[i]=-1000
+    end
+    coroutine.yield()
+  end
+  local hydrology=H.new(self.config,self,rx,ry,N,R.HALO)
+  local function carve(ax,ay,bx,by,level,amount,lake)
+    local width=lake and 9+math.sqrt(amount)*2 or 3+math.sqrt(amount)*1.3
+    local valley=width*2+8;local depth=2+math.sqrt(amount)*0.65
+    local dx,dy=bx-ax,by-ay;local length=dx*dx+dy*dy
+    local minx,maxx=math.max(0,math.floor((math.min(ax,bx)-valley+R.MARGIN)/4)),math.min(F-1,math.ceil((math.max(ax,bx)+valley+R.MARGIN)/4))
+    local miny,maxy=math.max(0,math.floor((math.min(ay,by)-valley+R.MARGIN)/4)),math.min(F-1,math.ceil((math.max(ay,by)+valley+R.MARGIN)/4))
+    for y=miny,maxy do for x=minx,maxx do
+      local t=length>0 and math.max(0,math.min(1,((x*4-R.MARGIN-ax)*dx+(y*4-R.MARGIN-ay)*dy)/length)) or 0
+      local distance=math.sqrt((x*4-R.MARGIN-ax-dx*t)^2+(y*4-R.MARGIN-ay-dy*t)^2)
+      if distance<valley then
+        local i=y*F+x
+        local cut=G.smooth((valley-distance)/(valley-width))
+        local profile=G.smooth(1-distance/width)
+        local target=distance<=width and level-1-depth*profile or math.max(level,lerp(region.bed[i],level,cut))
+        if level<=self.config.SEA_LEVEL then target=lerp(region.bed[i],level-1-depth*profile,cut) end
+        region.bed[i]=(distance<=width or level<=self.config.SEA_LEVEL) and math.min(region.bed[i],target) or math.max(level,math.min(region.bed[i],target))
+        local wet=width-distance
+        if wet>region.wet[i] or wet==region.wet[i] and level<region.water[i] then region.wet[i]=wet;region.water[i]=level end
+      end
+    end end
+  end
+  local paths,lakes={},{}
+  region.lakes=lakes
+  if self.config.rivers then
+    for y=-3,R.CORE+3 do
+      for x=-3,R.CORE+3 do
+        local i=(y+R.HALO)*N+x+R.HALO;local j=receiver[i];local amount=flow[i]
+        if amount>=8 and drain[i]>self.config.SEA_LEVEL then
+          local node=hydrology:resolve(rx*R.CORE+x,ry*R.CORE+y)
+          local level=H.level(node)
+          local ax,ay=posX[i]-ox,posY[i]-oy
+          if j>=0 then
+            local bx,by=posX[j]-ox,posY[j]-oy
+            local bend=(G.hash(rx*R.CORE+x,ry*R.CORE+y,self.config.seed+2111)-0.5)*0.3
+            local mx,my=(ax+bx)*0.5-(by-ay)*bend,(ay+by)*0.5+(bx-ax)*bend
+            local downstream=hydrology:resolve(rx*R.CORE+x+(j%N-i%N),ry*R.CORE+y+(math.floor(j/N)-math.floor(i/N)))
+            paths[#paths+1]={ax=ax,ay=ay,mx=mx,my=my,bx=bx,by=by,upper=level,lower=H.level(downstream),amount=amount}
+          else
+            lakes[#lakes+1]={x=ax,y=ay,level=node.base,width=9+math.sqrt(amount)*2,amount=amount}
+            local rim,outlet=hydrology:outlet(node)
+            if outlet then
+              paths[#paths+1]={ax=ax,ay=ay,mx=rim.px-ox,my=rim.py-oy,bx=outlet.px-ox,by=outlet.py-oy,
+                upper=node.base,lower=node.base,amount=amount,lake=true}
+            end
+          end
+          coroutine.yield()
+        end
+      end
+      coroutine.yield()
+    end
+  end
+  -- Read untouched global support, so carve order and categorical reach levels
+  -- cannot hide a cliff. Only actual lake/ocean surfaces count as water support.
+  local function support(x,y)
+    local fx,fy=x/32,y/32;local ix,iy=math.floor(fx),math.floor(fy)
+    local u,v=fx-ix,fy-iy;local k=(iy+R.HALO)*N+ix+R.HALO
+    local h=lerp(lerp(heights[k],heights[k+1],u),lerp(heights[k+N],heights[k+N+1],u),v)
+    local water=h<self.config.SEA_LEVEL and self.config.SEA_LEVEL or 0
+    for _,lake in ipairs(lakes) do
+      if (x-lake.x)^2+(y-lake.y)^2<lake.width^2 then water=math.max(water,lake.level) end
+    end
+    return h,water
+  end
+  for _,lake in ipairs(lakes) do carve(lake.x,lake.y,lake.x,lake.y,lake.level,lake.amount,true) end
+  for _,path in ipairs(paths) do
+    local upper,lower=path.upper,path.lower
+    local drop=Fluid.outlet(path,support)
+    if drop then
+      region.drops[#region.drops+1]=drop
+      lower=drop.lower
+    end
+    if not path.lake or drop then
+      carve(path.ax,path.ay,path.mx,path.my,drop and lower or upper,path.amount,false)
+      carve(path.mx,path.my,path.bx,path.by,lower,path.amount,false)
+    end
+    coroutine.yield()
+  end
+  Fluid.build(region,self.config,rx,ry,F,R.MARGIN)
+  region.hasFluid=next(region.fluid)~=nil
+  self.lastHydrologyNodes=hydrology.count
+  region.x,region.y=rx,ry
+  self.clock=self.clock+1;region.stamp=self.clock
+end
+function R:request(rx,ry)
+  local r=self:find(rx,ry)
+  if r then self.clock=self.clock+1;r.stamp=self.clock;return r end
+  if not self.job then self:start(rx,ry) end
+end
+function R:start(rx,ry)
+  local slot=self.cache[1]
+  for i=2,R.CACHE do if self.cache[i].stamp<slot.stamp then slot=self.cache[i] end end
+  slot.x,slot.y=math.huge,math.huge
+  self.job=coroutine.create(function() self:build(slot,rx,ry) end)
+  self.jobSeconds=0
+end
+
+function R:advance(seconds)
+  local start=os.clock()
+  repeat
+    if not self.job then return end
+    local t=os.clock();local ok,err=coroutine.resume(self.job);local elapsed=os.clock()-t
+    assert(ok,err);self.cpuSeconds=self.cpuSeconds+elapsed;self.jobSeconds=self.jobSeconds+elapsed
+    if coroutine.status(self.job)=='dead' then
+      self.builds=self.builds+1;self.maxBuildSeconds=math.max(self.maxBuildSeconds,self.jobSeconds);self.job=nil
+    end
+  until os.clock()-start>=seconds
+end
+function R:get(rx,ry)
+  local r=self:request(rx,ry)
+  while not r do self:advance(math.huge);r=self:request(rx,ry) end
+  return r
+end
+return R

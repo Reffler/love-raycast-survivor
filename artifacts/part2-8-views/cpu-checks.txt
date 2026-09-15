@@ -1,0 +1,65 @@
+check_world
+PASS: bulk/scalar fields, custom sparse grids, exact uint16 heights/maxima, seeds/order/eviction/far coordinates, strip requests, queue reversals/teleports, fixed buffer reuse
+
+check_surface
+PASS seed 1337: exact regional controls/seams (24 wet edge points), timing/order, chunk/scalar agreement
+PASS seed 42: exact regional controls/seams (0 wet edge points), timing/order, chunk/scalar agreement
+PASS seed 9187: exact regional controls/seams (33 wet edge points), timing/order, chunk/scalar agreement
+PASS: downhill/capped monotone accumulation, 314 river edges, 235 confluences, 19 sinks, 8 ocean outlets
+PASS: gentle beaches, variable beach width, cliff exclusion, grass/dirt, altitude/climate snow and steep rock
+
+check_water
+PASS seed 1337: shoreline invariant; 171 flow cells, 36 falling columns
+PASS seed 42: shoreline invariant; 0 flow cells, 0 falling columns
+PASS seed 9187: shoreline invariant; 0 flow cells, 0 falling columns
+PASS seed 65168: shoreline invariant; 0 flow cells, 0 falling columns
+PASS seed 716701: shoreline invariant; 0 flow cells, 0 falling columns
+PASS seed 452312: shoreline invariant; 0 flow cells, 0 falling columns
+PASS seed 5: shoreline invariant; 135 flow cells, 13 falling columns
+PASS seed 26: shoreline invariant; 690 flow cells, 71 falling columns
+PASS seed 33: shoreline invariant; 239 flow cells, 19 falling columns
+PASS: beyond-halo ocean connectivity; 323 ocean nodes, 800 inland nodes, 6 explicit reach drops; source levels and submerged beds
+PASS: eighth-block water heights, dry-bank invariant; 715 tall neighbor faces confined to narrow lips
+
+check_waterfalls
+PASS: 40-block river at x=16, equal metadata; 4 falling columns, 70 flow cells; connected chunks/regions and exact rebuild
+PASS: 40-block lake outlet at x=16, equal metadata; 4 falling columns, 70 flow cells; connected chunks/regions and exact rebuild
+PASS: 1-block river at x=16, equal metadata; 0 falling columns, 7 flow cells; connected chunks/regions and exact rebuild
+PASS: 20-block river at x=16, equal metadata; 4 falling columns, 70 flow cells; connected chunks/regions and exact rebuild
+PASS: 40-block river at x=1024, equal metadata; 4 falling columns, 70 flow cells; connected chunks/regions and exact rebuild
+PASS: 40-block lake outlet at x=0, equal metadata; 4 falling columns, 70 flow cells; connected chunks/regions and exact rebuild
+PASS: actual equal-metadata lake outlet and exact macro seam, seed 5
+PASS: actual equal-metadata lake outlet and exact macro seam, seed 26
+PASS: actual equal-metadata lake outlet and exact macro seam, seed 33
+
+check_river_geometry
+PASS: 2/4/6/8-column falls; intact backing, feeder and landing occupancy across macro/chunk boundary
+PASS: vertical/diagonal/oblique cliff sheets, continuous lanes and exact macro overlap
+PASS: 9 natural waterfalls continuously connected; 1017 curved edges, exact endpoints and bounded sampling
+PASS: 261 recessed channel centers, 389 raised bank shoulders and shared drainage tangents
+PASS: deterministic warped lake shoreline crosses nominal circle in both directions
+
+check_topology
+1337	graph	d81cabea
+1337	ocean/beach	4a744718
+42	graph	40ad8ed9
+42	ocean/beach	46896b9c
+9187	graph	9ec1a0ff
+9187	ocean/beach	f817e8bd
+5	graph	2922b3c3
+5	ocean/beach	28a74f40
+26	graph	42ba52a6
+26	ocean/beach	baaf50b1
+33	graph	e298d279
+33	ocean/beach	8f25fdf9
+PASS: pre-2.8 drainage and ocean/beach regression hashes
+
+check_flow
+PASS: FULL/FLOW_1..7/FALLING, bounded fan, downward escape, exact fluid region seam, flow chunk/scalar agreement
+
+check_collision
+PASS: double-tap toggle, repeat rejection, hover, rise, descend, flight/ground sprint, terrain collision, gravity resume
+PASS: solid block sides, jump ascent, descent, negative seam collision, fast landing, generated terrain traversal
+
+check_frame_loop
+PASS: 30/60/144/240/333 FPS, uncapped, VSync, overload, background, oversleep, truncated sleep, average rate, stall recovery, events, quit, validation

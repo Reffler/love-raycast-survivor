@@ -1,0 +1,6 @@
+PASS: exact capsule math, vertical/diagonal axes, explicit overflow reduction
+PASS seed 1337: full region survey, bulk/scalar, negative/macro seams, eviction, water roofs; zero overflows
+PASS seed 716701: full region survey, bulk/scalar, negative/macro seams, eviction, water roofs; zero overflows
+PASS seed 452312: full region survey, bulk/scalar, negative/macro seams, eviction, water roofs; zero overflows
+PASS seed 42: full region survey, bulk/scalar, negative/macro seams, eviction, water roofs; zero overflows
+PASS: 4194304 columns surveyed, 2964 complex chunks

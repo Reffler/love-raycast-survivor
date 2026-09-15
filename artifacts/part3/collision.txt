@@ -1,0 +1,3 @@
+PASS: double-tap toggle, repeat rejection, hover, rise, descend, flight/ground sprint, terrain collision, gravity resume
+PASS: solid block sides, jump ascent, descent, negative seam collision, fast landing, generated terrain traversal
+PASS: span floors/ceilings, cave jumps/landing, flight, walking and low overhang collision

@@ -1,0 +1,6 @@
+PASS visual fixture: equal-level-40
+PASS visual fixture: lake-outlet-40
+PASS visual fixture: ramp-1
+PASS visual fixture: fall-20
+PASS visual fixture: region-boundary-40
+PASS: deep/shallow surfaces and 8/80-block falls have identical RGB; all fixture views match unaccelerated rays

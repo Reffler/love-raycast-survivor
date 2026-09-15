@@ -1,0 +1,7 @@
+fall flat-reference 1920x1080: median 2.181 ms p99 6.637 ms
+fall sloped 1920x1080: median 2.216 ms p99 6.037 ms
+landing flat-reference 1920x1080: median 1.818 ms p99 5.567 ms
+landing sloped 1920x1080: median 1.900 ms p99 5.539 ms
+overview flat-reference 1920x1080: median 1.937 ms p99 5.723 ms
+overview sloped 1920x1080: median 2.050 ms p99 5.538 ms
+PASS: generated fall/landing/overview agree pixel-for-pixel with unaccelerated sloped rays

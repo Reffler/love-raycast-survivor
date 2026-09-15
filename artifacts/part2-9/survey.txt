@@ -1,0 +1,18 @@
+65168 POINT,peak,2040,-1920,194
+POINT,coast,0,-872,48
+POINT,river,-216,-1720,68
+POINT,plain,0,-1000,55
+COUNTS,grass=37280,sand=17708,rock=4802,snow=4573,dirt=197781,ocean=213841,river=2177
+
+716701 POINT,peak,-160,-1152,224
+POINT,coast,-608,144,48
+POINT,river,-384,0,68
+POINT,plain,-640,144,49
+COUNTS,grass=164656,sand=18340,rock=13175,snow=11623,dirt=54350,ocean=69421,river=16333
+
+452312 POINT,peak,32,-1056,205
+POINT,coast,136,536,48
+POINT,river,-600,-904,68
+POINT,plain,0,0,57
+COUNTS,grass=198981,sand=33633,rock=13451,snow=9927,dirt=6152,ocean=22375,river=20852
+
