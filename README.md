@@ -391,3 +391,21 @@ additional geometry traversals per pixel; performance has not been profiled.
 
 `WATER_WAVE_STRENGTH` defaults to `0.035` (`0` disables ripples).
 `WATER_ABSORPTION` defaults to `0.22`; increase for murkier water.
+
+Water reflections use the geometric surface normal for a stable, clear terrain
+image. Gentle animated normals affect refraction only. Blue tint applies to the
+transmitted water body, preserving reflected landscape contrast; reflection starts
+at 12% and strengthens toward grazing angles. No extra rays or passes are added.
+
+## Stars and clouds
+
+Night sky has fixed square stars fading in after sunset. Slow 16-block cloud patches
+cross the sky and cover stars/sun/moon, with cooler nighttime colors. Clouds use
+a bounded grid traversal within a thin slab, stopping at the first occupied column; water sky reflections
+include them. No added textures or render passes. Cloud layer is a sky effect and
+does not cast terrain shadows.
+
+`STARS_ENABLED` / `CLOUDS_ENABLED` toggle each layer. `CLOUD_HEIGHT` defaults to
+320 blocks; `CLOUD_SPEED` defaults to 0.7 blocks/second.
+`CLOUD_THICKNESS` defaults to 16 blocks. Connected cloud faces have uniform color,
+with darker vertical sides and no internal tile borders.

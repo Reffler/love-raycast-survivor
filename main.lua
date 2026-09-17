@@ -11,7 +11,7 @@ local CONFIG = {
   VIEW_DIST        = 556.0,             -- Max raycast distance (visibility cutoff)
   VSYNC            = true,            -- Synchronize presentation to display refresh
   MAX_FPS          = 0,              -- VSync-off limit; 0 = uncapped
-  DAY_CYCLE_SECONDS = 600.0,           -- Full day + night; use 1200 for a 20-minute cycle
+  DAY_CYCLE_SECONDS = 20.0,           -- Full day + night; use 1200 for a 20-minute cycle
   SHADOWS_ENABLED  = true,
   SHADOW_DISTANCE  = 96.0,            -- Solid sun shadows; supported range 0..128 blocks
   SUN_STRENGTH     = 0.72,
@@ -19,6 +19,11 @@ local CONFIG = {
   NIGHT_AMBIENT_STRENGTH = 0.48,     -- Night visibility, including shaded terrain
   MOON_STRENGTH    = 0.32,
   WATER_WAVE_STRENGTH = 0.035,        -- Normal ripples only; block geometry stays fixed
+  STARS_ENABLED   = true,
+  CLOUDS_ENABLED  = true,
+  CLOUD_HEIGHT    = 320.0,
+  CLOUD_THICKNESS = 16.0,            -- Cubic cloud layer depth
+  CLOUD_SPEED     = 0.7,             -- Blocks per second
   WATER_ABSORPTION = 0.22,           -- Higher makes shallows less transparent
   FOG_ENABLED     = true,
   FOG_START       = 0.35,            -- Fraction of view distance; full fog at far limit
@@ -72,6 +77,7 @@ local velX, velY = 0, 0
 local currentFloor = eyeHeight - CONFIG.CAM_HEIGHT
 local physicsAccumulator = 0
 local waterPhase,waterParams=0,{0,0,0,0}
+local cloudDrift,cloudParams,cloudTint=0,{0,0,320,1},{1,1,1}
 local dayPhase = 1/6 -- Start at 60-degree elevation; 0 sunrise, 0.5 sunset, 0.75 midnight.
 local skyTint,lightTint,sunDirection = {0,0,0},{1,1,1},{0,0,1}
 local shadowCacheBounds={0,0,0,0}
@@ -483,6 +489,7 @@ local function updatePhysics(dt)
 end
 
 function love.update(dt)
+  cloudDrift=(cloudDrift+dt*CONFIG.CLOUD_SPEED)%8192
   waterPhase=(waterPhase+dt*0.25)%(math.pi*2)
   world.shadowDistance=CONFIG.SHADOWS_ENABLED and CONFIG.SHADOW_DISTANCE or 0
   dayPhase=(dayPhase+dt/CONFIG.DAY_CYCLE_SECONDS)%1
@@ -536,6 +543,9 @@ function love.draw()
   if raycastShader:hasUniform('zenithTint') then raycastShader:send('zenithTint',zenithTint) end
   if raycastShader:hasUniform('directTint') then raycastShader:send('directTint',directTint) end
   if raycastShader:hasUniform('fogRange') then raycastShader:send('fogRange',fogRange) end
+  cloudTint[1],cloudTint[2],cloudTint[3]=0.10+0.74*daylight,0.14+0.73*daylight-0.07*twilight,0.23+0.67*daylight-0.15*twilight
+  if raycastShader:hasUniform('cloudTint') then raycastShader:send('cloudTint',cloudTint) end
+  if raycastShader:hasUniform('starStrength') then raycastShader:send('starStrength',CONFIG.STARS_ENABLED and math.max(0,math.min(1,(-sunDirection[3]-0.04)/0.24)) or 0) end
   if raycastShader:hasUniform('skyTint') then raycastShader:send('skyTint',skyTint) end
   if raycastShader:hasUniform('lightTint') then raycastShader:send('lightTint',lightTint) end
   raycastShader:send('sunDirection',sunDirection)
@@ -566,6 +576,9 @@ function love.draw()
 
   -- Keep GPU coordinates near zero, even far from spawn.
   local originX, originY = math.floor(renderPx / 16) * 16, math.floor(renderPy / 16) * 16
+  cloudParams[1],cloudParams[2],cloudParams[3],cloudParams[4]=originX%8192-cloudDrift,originY%8192,CONFIG.CLOUD_HEIGHT,CONFIG.CLOUDS_ENABLED and 1 or 0
+  if raycastShader:hasUniform('cloudParams') then raycastShader:send('cloudParams',cloudParams) end
+  if raycastShader:hasUniform('cloudThickness') then raycastShader:send('cloudThickness',CONFIG.CLOUD_THICKNESS) end
   waterParams[1],waterParams[2],waterParams[3],waterParams[4]=originX%32,originY%32,waterPhase,CONFIG.WATER_WAVE_STRENGTH
   if raycastShader:hasUniform('waterParams') then raycastShader:send('waterParams',waterParams) end
   if raycastShader:hasUniform('waterAbsorption') then raycastShader:send('waterAbsorption',CONFIG.WATER_ABSORPTION) end

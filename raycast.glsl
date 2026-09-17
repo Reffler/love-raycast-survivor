@@ -19,6 +19,10 @@ extern vec2 cacheOffset;
 extern float maxHeight;
 extern float viewDist;
 extern vec3 skyTint;
+extern float starStrength;
+extern vec4 cloudParams; // world origin minus drift XY, altitude, enabled
+extern vec3 cloudTint;
+extern float cloudThickness;
 extern vec4 waterParams; // origin modulo 32, phase, normal amplitude
 extern float waterAbsorption;
 extern vec3 zenithTint;
@@ -146,20 +150,79 @@ vec3 atmosphericColor(vec3 color,vec3 ray,float distance) {
   // Match the sky without celestial discs; smooth distance fade, no shadow filtering.
   return mix(color,skyGradient(ray),fog*fog*(3.0-2.0*fog));
 }
-vec3 skyColor(vec3 ray) {
+float skyHash(vec3 p) {
+  p=fract(p*0.1031);p+=dot(p,p.yzx+33.33);
+  return fract((p.x+p.y)*p.z);
+}
+float cloudNoise(vec2 p) {
+  vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
+  return mix(mix(skyHash(vec3(mod(i,64.0),1)),skyHash(vec3(mod(i+vec2(1,0),64.0),1)),f.x),
+    mix(skyHash(vec3(mod(i+vec2(0,1),64.0),1)),skyHash(vec3(mod(i+1.0,64.0),1)),f.x),f.y);
+}
+vec3 skyAt(vec3 ray,vec3 origin) {
   vec3 sky=skyGradient(ray);
-  // Square sun and opposite moon, fixed to the world rather than the camera.
+  if (starStrength>0.0 && ray.z>0.015) {
+    // Cube-projected, fixed celestial cells: square stars without polar stretching.
+    vec3 d=abs(ray);
+    float major=max(d.x,max(d.y,d.z));
+    vec2 uv=d.z>=max(d.x,d.y) ? ray.xy/d.z : d.x>=d.y ? ray.yz/d.x : ray.xz/d.y;
+    float face=d.z>=max(d.x,d.y) ? 1.0 : d.x>=d.y ? (ray.x>0.0 ? 2.0 : 3.0) : (ray.y>0.0 ? 4.0 : 5.0);
+    vec2 grid=uv*80.0,cell=floor(grid);
+    float seed=skyHash(vec3(cell,face));
+    if (seed>0.983) {
+      vec2 center=vec2(0.25+0.5*skyHash(vec3(cell,face+7.0)),0.25+0.5*skyHash(vec3(cell,face+13.0)));
+      float size=0.055+0.055*seed;
+      float pixel=80.0*2.0*tanHalfVFOV/love_ScreenSize.y/major;
+      vec2 overlap=clamp((vec2(size)+pixel*0.5-abs(fract(grid)-center))/pixel,0.0,1.0);
+      sky+=vec3(0.78,0.85,1.0)*overlap.x*overlap.y*starStrength*smoothstep(0.015,0.15,ray.z);
+    }
+  }
   vec3 right=vec3(-0.6,0.8,0.0);
   vec2 celestial=vec2(dot(ray,right),dot(ray,cross(right,sunDirection)));
   float facing=dot(ray,sunDirection);
   if (ray.z>0.0) {
     if (facing>0.0 && max(abs(celestial.x),abs(celestial.y))<0.04)
-      return mix(sky,vec3(1.0,0.94,0.70),smoothstep(0.0,0.08,ray.z));
+      sky=mix(sky,vec3(1.0,0.94,0.70),smoothstep(0.0,0.08,ray.z));
     if (facing<0.0 && max(abs(celestial.x),abs(celestial.y))<0.028)
-      return mix(sky,vec3(0.75,0.82,0.94),smoothstep(0.0,0.08,ray.z));
+      sky=mix(sky,vec3(0.75,0.82,0.94),smoothstep(0.0,0.08,ray.z));
+  }
+  if (cloudParams.w>0.0 && cloudThickness>0.0) {
+    // Intersect a thin slab first; traverse only 16-block cloud columns inside it.
+    float bottom=cloudParams.z,ceiling=bottom+cloudThickness;
+    float entry=0.0,leave=4096.0;
+    vec3 face=vec3(0,0,ray.z>0.0 ? -1.0 : 1.0);
+    if (abs(ray.z)>0.000001) {
+      float a=(bottom-origin.z)/ray.z,b=(ceiling-origin.z)/ray.z;
+      entry=max(0.0,min(a,b));leave=min(leave,max(a,b));
+    } else if (origin.z<bottom || origin.z>ceiling) leave=-1.0;
+    if (entry<leave) {
+      vec2 start=origin.xy+cloudParams.xy;
+      vec2 cell=floor((start+ray.xy*entry+sign(ray.xy)*0.0001)/16.0);
+      vec2 stepDir=sign(ray.xy),inverse=1.0/max(abs(ray.xy),vec2(1e-20));
+      vec2 next=(stepDir*(cell*16.0-start)+stepDir*8.0+8.0)*inverse;
+      // Bound covers every XY crossing within 4096 blocks, including diagonal rays.
+      for (int i=0;i<364;++i) {
+        float end=min(leave,min(next.x,next.y));
+        if (end>entry && cloudNoise((cell+0.5)/8.0)>0.52) {
+          // Uniform connected faces: no per-tile borders or inset shading.
+          float shade=face.z>0.5 ? 1.0 : face.z< -0.5 ? 0.86 : 0.72;
+          sky=mix(sky,cloudTint*shade,1.0-smoothstep(1200.0,4096.0,entry));
+          break;
+        }
+        if (end>=leave) break;
+        entry=end;
+        if (next.x<next.y) {
+          cell.x+=stepDir.x;next.x+=16.0*inverse.x;face=vec3(-stepDir.x,0,0);
+        } else {
+          cell.y+=stepDir.y;next.y+=16.0*inverse.y;face=vec3(0,-stepDir.y,0);
+        }
+      }
+    }
   }
   return sky;
 }
+vec3 skyColor(vec3 ray) { return skyAt(ray,camPos); }
+
 const vec3 GRASS = vec3(0.32,0.62,0.18);
 const vec3 DIRT = vec3(0.43,0.28,0.15);
 const vec3 WATER = vec3(0.16,0.51,0.57);
@@ -417,19 +480,21 @@ vec3 shadeWater(Hit h,vec3 ray) {
   if (top>0.5) {
     vec2 p=h.position.xy+waterParams.xy;
     float footprint=h.distance*2.0*tanHalfVFOV/love_ScreenSize.y;
-    float amplitude=waterParams.w/(1.0+footprint*footprint*4.0);
+    float amplitude=waterParams.w*0.2/(1.0+footprint*footprint*4.0);
     float a=cos(dot(p,vec2(1,2))*0.3926990817+waterParams.z*2.0);
     float b=cos(dot(p,vec2(-2,1))*0.1963495408-waterParams.z*3.0);
     n=normalize(vec3(amplitude*(a-0.6*b),amplitude*(0.6*a+b),1.0));
   }
-  float facing=clamp(abs(dot(-ray,n)),0.0,1.0);
+  // Stable geometric normal controls reflected geometry and its blend weight.
+  // Animated normals only bend transmission slightly, never warp distant mountains.
+  float facing=clamp(abs(dot(-ray,h.normal)),0.0,1.0);
   float grazing=1.0-facing,g2=grazing*grazing;
-  float reflection=0.025+0.975*g2*g2*grazing;
+  float reflection=0.12+0.88*g2*g2*grazing;
   if ((h.distance-fogRange.x)*fogRange.y>=1.0) return skyGradient(ray);
   vec3 lightDirection=sunDirection.z>=0.0 ? sunDirection : -sunDirection;
   float strength=sunDirection.z>=0.0 ? sunStrength : moonStrength;
   vec3 illumination=lightTint*ambientStrength+directTint*(strength*max(lightDirection.z,0.0));
-  vec3 deep=vec3(0.035,0.19,0.26)*illumination;
+  vec3 deep=vec3(0.025,0.105,0.24)*illumination;
   bool entering=dot(ray,h.normal)<0.0;
   vec3 oriented=entering ? n : -n;
   vec3 refractionRay=refract(ray,oriented,entering ? 0.7501875 : 1.333);
@@ -444,15 +509,16 @@ vec3 shadeWater(Hit h,vec3 ray) {
       transmitted=mix(deep,shadeSolid(bed,refractionRay,false),transmission);
     }
   } else reflection=1.0; // Total internal reflection when viewed from below.
-  vec3 reflectionRay=reflect(ray,oriented);
-  // Prevent small normal ripples from sending above-water reflections through the surface.
-  if (entering && dot(reflectionRay,h.normal)<=0.0) reflectionRay=reflect(ray,h.normal);
+  vec3 reflectionRay=reflect(ray,h.normal);
   Hit reflectedHit=traceRay(h.position+(entering ? h.normal : -h.normal)*0.002,reflectionRay,viewDist,false);
-  vec3 reflected=skyColor(reflectionRay);
+  vec3 reflected=skyAt(reflectionRay,h.position);
   if (reflectedHit.valid)
-    reflected=atmosphericColor(shadeSolid(reflectedHit,reflectionRay,false),reflectionRay,reflectedHit.distance+h.distance);
+    reflected=atmosphericColor(shadeSolid(reflectedHit,reflectionRay,false),reflectionRay,reflectedHit.distance);
   reflection*=mix(0.25,1.0,top);
-  return atmosphericColor(mix(transmitted,reflected,reflection),ray,h.distance);
+  // Tint the water body, not the reflected landscape: preserve reflection contrast.
+  vec3 body=mix(transmitted*vec3(0.65,0.78,0.95),deep,0.18);
+  vec3 waterColor=mix(body,reflected,reflection);
+  return atmosphericColor(waterColor,ray,h.distance);
 }
 vec3 shadeHit(Hit h,vec3 ray) {
   if (h.kind==0) return skyColor(ray);
