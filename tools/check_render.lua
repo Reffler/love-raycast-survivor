@@ -1,5 +1,6 @@
 local originalLoad=love.load
 function love.load()
+  CONFIG.AA_ENABLED=false -- Exact frame comparisons test geometry independently of temporal history.
   originalLoad()
   love.window.setMode(960,540,{fullscreen=false,vsync=0})
   love.resize(love.graphics.getDimensions())

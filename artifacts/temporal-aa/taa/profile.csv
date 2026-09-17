@@ -1,0 +1,7 @@
+view,median_ms,p99_ms,max_ms
+ground,3.2854,3.8573,5.2643
+moving-ground,3.3205,4.4935,5.3409
+horizon,2.7789,3.2415,3.4163
+downward,2.5807,2.6977,2.8131
+cave,2.4420,2.6033,2.6359
+cave-ceiling,1.9628,2.1632,2.1682

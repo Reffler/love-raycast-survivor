@@ -571,3 +571,111 @@ luajit tools/check_collision.lua
 luajit tools/check_streaming.lua
 luajit tools/check_frame_loop.lua
 ```
+
+## Pixel-locked sun shadows — 2026-09-17
+
+96-block binary secondary DDA reuses chunk maxima and cave spans. No additional
+persistent GPU textures. Receiver positions snap to world-space face texels;
+back-facing and low-sun pixels skip rays. Existing preload margin supplies blockers.
+
+Fresh matched moving benchmark: 2.747 → 2.889 ms median, 4.039 → 4.231 ms p99,
+4.369 → 4.568 ms maximum. Median overhead: 5.2%. Disabled path: 2.742 ms median.
+Fixed-view overhead ranges from 0.009 ms (cave ceiling) to 0.265 ms (downward).
+Most cost is within initial fine cells; longer rays mostly skip chunks.
+
+[Full report](artifacts/pixel-shadows/REPORT.md) records methodology, all five
+distances/views, traversal counters, visual checks, bounds and reproduction commands.
+
+
+## Fixed 4× geometry coverage — 2026-09-17
+
+RX 6700 XT / Mesa 26.2.2, 1920×1080, 556-block view, 96-block shadows,
+200 timed frames after 20 warmups; synchronized readback included. Baseline saved
+before this change, including its analytic mip LOD and linear texture filters.
+Instrumentation uses a separate diagnostic shader outside timing; production adds
+no render targets. Existing uncommitted work was retained.
+
+| View | Single median / p99 / max ms | 4× median / p99 / max ms | Mean keys | 1 / 2 / 3 / 4 keys % | Shadows/pixel | AO/pixel |
+|---|---|---|---|---|---|---|
+| Ground | 3.283 / 3.829 / 5.168 | 14.063 / 14.430 / 14.601 | 2.472 | 43.533 / 9.137 / 3.965 / 43.365 | 0.915 | 2.057 |
+| Horizon | 2.632 / 2.730 / 2.781 | 10.703 / 11.666 / 11.728 | 3.081 | 15.795 / 17.621 / 9.236 / 57.348 | 0.373 | 1.573 |
+| Downward | 2.461 / 2.706 / 2.797 | 10.651 / 10.922 / 10.971 | 2.895 | 11.627 / 24.944 / 25.725 / 37.704 | 2.415 | 2.801 |
+| Cave | 2.281 / 2.367 / 2.433 | 9.235 / 9.561 / 9.763 | 1.471 | 65.436 / 25.849 / 4.898 / 3.816 | 0.563 | 1.471 |
+| Cave ceiling | 1.781 / 1.869 / 2.025 | 6.184 / 6.319 / 6.458 | 1.201 | 81.440 / 17.305 / 0.997 / 0.258 | 0.065 | 1.201 |
+
+Sky samples remain distinct because sky gradient/celestial edges vary by direction;
+these count as keys but perform neither AO nor shadow tracing. Near-one expensive
+shade per pixel is achieved only in cave-ceiling views, not texture-dense views.
+Four normalized directions retain existing metric view-distance/fog semantics.
+
+Validation: six controlled fixture families, 17 camera positions spaced 1/1024
+block, repeated frames byte-identical; four geometry calls per pixel and bounded
+unique shading counts. Includes stairs, thin grass tops, distant ridges, diagonal
+pillars, cave entrances/arches/ceilings, water boundaries. Existing shadow suite
+passes including world-grid locking under translation/rotation and cave roofs.
+Grouped versus independently shaded four samples measured maximum RGB difference
+0.000009745. This is not mathematically identical: AO interpolation and fog are
+nonlinear. Fixed four samples also cannot guarantee zero motion aliasing or ridge
+popping; no such guarantee is claimed. Automated fixtures check determinism and
+sample counts, not perceptual absence of all motion artifacts.
+
+Reproduce: `python3 tools/aa_tools.py check` and
+`python3 tools/aa_tools.py profile`. Raw CSV, screenshots and baseline live in
+`artifacts/geometry-aa/`.
+
+
+### F5 AA toggle
+
+F5 disables/enables AA immediately; disabled draws one center ray. Enabled retains
+original four-ray coverage and nearest texture shading. F3 HUD shows state.
+Thin-top side blending was reverted; original face color and lighting restored.
+
+
+## Temporal AA replacing 4× coverage — 2026-09-17
+
+Matched RX 6700 XT / Mesa 26.2.2 runs, 1920×1080, 556-block view,
+96-block shadows, 200 timed frames after 32 warmups. Readback and complete
+presentation path included; no simultaneous GPU test runs during final profile.
+Baseline is the immediately preceding nearest-textured 4× implementation, not
+the older single-ray mipmapped renderer. 4× source remains benchmark-only.
+
+| View | 4× median / p99 / max ms | TAA median / p99 / max ms | Median reduction |
+|---|---|---|---|
+| ground | 14.143 / 14.630 / 16.682 | 3.285 / 3.857 / 5.264 | 76.8% |
+| moving-ground | 14.184 / 14.671 / 14.680 | 3.321 / 4.494 / 5.341 | 76.6% |
+| horizon | 10.710 / 11.282 / 11.549 | 2.779 / 3.241 / 3.416 | 74.1% |
+| downward | 10.690 / 10.967 / 11.146 | 2.581 / 2.698 / 2.813 | 75.9% |
+| cave | 9.274 / 9.453 / 9.463 | 2.442 / 2.603 / 2.636 | 73.7% |
+| cave-ceiling | 6.223 / 6.541 / 6.752 | 1.963 / 2.163 / 2.168 | 68.5% |
+
+One geometry ray and at most one AO/shadow evaluation per pixel replace four
+coverage rays and variable shading groups. A 16-position Halton sequence feeds a
+full-resolution temporal resolve. Current color and signed forward depth share
+RGBA16F; two ping-pong history buffers store resolved color/current depth. Extra
+allocation is 47.46 MiB at 1080p. F5 off bypasses jitter and temporal passes but
+keeps allocations for instant toggling. F3 HUD is drawn after history resolve.
+
+Camera reprojection uses an unjittered grid and world camera deltas, preserving
+history across cache rebases. Individual history taps are depth/category tested;
+local surface depth intervals accommodate subpixel top/side changes. Sky/solid
+edge neighborhoods allow mixed history coverage. Current 3×3 color bounds clamp
+history; water history weight is capped at 0.5. Normal history weight reaches
+15/16. Resize, FOV, AA/shadow toggles, >8-block camera jumps and large camera turns
+reset history. Small lighting changes converge over successive frames.
+
+Controlled staircase at 320×180: static RGB RMS frame change 10.783 raw jittered
+→ 0.790 resolved; tiny continuous translation crossing a cache rebase 10.780 →
+0.930. These measure stabilization against jittered single samples, **not** a
+quality comparison against 4×. They do not prove absence of all ghosting/shimmer.
+GPU probes verify XY reprojection, depth/disocclusion rejection, sky translation,
+silhouette-local mixed history, water history limit, screen bounds, toggles,
+resize/FOV/camera resets and HUD isolation. Close-up nearest texture sampling and
+binary world-snapped shadow tests remain unchanged before temporal accumulation.
+
+Tradeoffs: temporal resolve softens some fine detail; local edge history can leave
+brief trails at disocclusions, and lighting changes take frames to settle. No
+claim of complete aliasing elimination. Thin-top color blending remains removed.
+
+Reproduce: `python3 tools/temporal_tools.py profile` and
+`python3 tools/temporal_tools.py check`. Raw CSVs, screenshots and baseline source
+are in `artifacts/temporal-aa/`.

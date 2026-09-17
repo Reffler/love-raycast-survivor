@@ -2,14 +2,16 @@
 
 Seeded block terrain in LÖVE 11.5: continents, oceans, plains, mountain chains,
 snowy ridgelines, valleys, rivers, lakes, beaches, cliff coasts, underground caves,
-tunnels, chambers, entrances, ravines and rock bridges. Flat terrain
-colors, native display resolution, no image textures or post-processing.
+tunnels, chambers, entrances, ravines and rock bridges. Grass/dirt textures,
+ambient occlusion, pixel-locked sun shadows and a configurable day/night cycle.
+Native display resolution; no post-processing.
 
 ```sh
 love .
 ```
 
 WASD moves, mouse looks, Shift sprints, Space jumps, F3 toggles diagnostics,
+F4 toggles sun/moon shadows, F5 toggles temporal AA,
 Escape quits. Double-tap Space within 0.3 seconds toggles flight. Space rises,
 Ctrl descends, Shift flies faster; release vertical controls to hover. Flight
 retains terrain collision. Water has a visible surface; swimming is not implemented.
@@ -24,6 +26,13 @@ Edit `CONFIG` in `main.lua`:
 - `CONTINENT_SCALE`: spacing of macro continent controls, default `2048` blocks.
 - `DETAIL_HEIGHT`: small surface detail amplitude, default `1.25`; `0` retains macro geography.
 - `VIEW_DIST`: visible distance, default `556` blocks.
+- `DAY_CYCLE_SECONDS`: full day/night duration, default `20`; use `1200` for 20 minutes.
+- `FOG_ENABLED`, `FOG_START`: atmospheric distance fog; enabled, starts at `0.35` of view distance and reaches sky color at the far limit.
+- `AA_ENABLED`: temporal anti-aliasing, default `true`; toggle with F5. F3 HUD shows state. Off uses one center ray.
+- `SHADOWS_ENABLED`: directional solid-geometry shadows, default `true`; toggle with F4.
+- `SHADOW_DISTANCE`: maximum shadow-ray length, default `96` blocks, range `0–128`.
+- `SUN_STRENGTH`, `AMBIENT_STRENGTH`: direct/ambient light, defaults `0.72` / `0.28`.
+- `MOON_STRENGTH`, `NIGHT_AMBIENT_STRENGTH`: moon direct/night ambient, defaults `0.32` / `0.48`; moonlight uses the same pixel-locked shadows.
 - `CAVES`: cached volumetric caves and surface openings, default `true`.
 - `PLAYER_HEIGHT`: physical body height, default `1.80`; camera remains at `1.62`.
 - `CAM_HEIGHT`: player eye height, default `1.62` blocks.
@@ -143,7 +152,7 @@ Completed buffers are copied/uploaded with a cooperative 0.5 ms per-frame budget
 individual uploads can exceed the remaining budget. Request tickets discard obsolete
 results after reversals or teleports. Shutdown joins the worker cleanly.
 
-Movement checks visible residency before advancing. If the worker falls behind,
+Movement checks visible residency plus enabled shadow reach before advancing. If the worker falls behind,
 movement waits at the loaded boundary instead of exposing recycled terrain or
 blocking a frame to generate it. Normal 50-block/s sprint tests need no such waits.
 The renderer's first use is warmed during loading. Synchronous `World:step` remains
@@ -160,7 +169,7 @@ and G / 8 for water. FFI writes a contiguous upload buffer; one
 window/display-mode reloads. Collision still uses terrain bed height, not water.
 
 Ray traversal skips chunks above their maximum solid/water height. The shader
-selects precomputed flat material colors and intersects water tops, vertical drop
+selects grass/dirt textures or flat material colors and intersects water tops, vertical drop
 faces, and terrain beds in ray order. Fractional water tops use four shared corner
 heights and two ray/triangle intersections; compatible full/falling neighbors force
 full-height edges. Eight extra neighbor reads occur only when a ray encounters a
@@ -310,3 +319,75 @@ against the preserved pre-span shader, including water, waterfalls, negative
 coordinates, macro boundaries, chunk skipping and reload. Further probes verify
 four-span floors/ceilings, interior walls, upper materials, half-float packing and
 unused `-1` values. Natural cave views also match unaccelerated XY DDA exactly.
+
+## Pixel-locked shadows
+
+Solid receivers snap to world-space 16×16 face texels before a binary sun ray.
+Chunk maxima skip empty space; complex chunks use cave/overhang intervals.
+Direct sun/moon light fades between 12° and 18° elevation; below 12° no shadow rays run.
+Water neither casts nor receives shadows. No extra persistent GPU textures.
+
+[Profiling and validation](artifacts/pixel-shadows/REPORT.md) includes all five
+views at disabled/32/64/96/128-block settings. Reproduce with:
+
+```sh
+python3 tools/shadow_tools.py check
+python3 tools/shadow_tools.py profile
+python3 tools/benchmark.py --shadow-distance 96
+```
+
+Atmosphere uses a horizon-to-zenith sky gradient, warm directional sunlight, cool
+moonlight and blue ambient fill. Distance fog shares sky colors across solid terrain
+and water. All shading stays in the existing raycaster, with no new texture reads
+or render passes; day/night palettes update once per frame.
+
+Grass/dirt use nearest-neighbor LOD-0 textures. Shadow visibility remains binary
+at world-space 16×16 receivers before temporal resolve.
+
+### Temporal anti-aliasing
+
+F5 toggles temporal AA; F3 HUD shows `TAA` or `off`. Enabled mode traces and shades
+one ray per pixel, with a repeating 16-position Halton jitter. A separate resolve
+reprojects color history using camera transforms and signed forward depth. History
+uses an unjittered output grid, with depth-tested bilinear taps and neighborhood
+color clamping. Local sky/solid boundaries retain mixed coverage so thin silhouettes
+do not reset history on every jitter step. Water uses shorter history.
+
+History resets on toggles, resize/FOV changes, teleports and large camera rotations.
+Camera displacement uses world coordinates, so 16-block cache-origin rebases do not
+move history. HUD draws after resolve and never enters history. Off mode traces
+one unjittered ray and skips temporal passes. No thin-top color/lighting alteration.
+
+Temporal accumulation reduces shimmer but can soften detail and leave brief edge
+trails during disocclusion. It does not guarantee zero aliasing. Three RGBA16F
+buffers add about 47.5 MiB at 1920×1080; buffers remain allocated while AA is off.
+
+The old four-ray renderer is removed from production. Its source is archived only
+for benchmarks under `artifacts/temporal-aa/msaa4/`. Run:
+
+```sh
+python3 tools/temporal_tools.py check
+python3 tools/temporal_tools.py profile
+```
+
+The profile compares archived 4× against current TAA using identical ground,
+horizon, downward, cave, cave-ceiling and moving-ground views. Exact geometry tests
+explicitly disable TAA; temporal-specific tests cover accumulation and history.
+
+## Water appearance
+
+Water traces reflected and refracted rays through existing chunk maxima and solid
+intervals, showing actual mountains and submerged block faces. Refraction bends at
+the surface; colored absorption grows with actual underwater ray length. Reflection
+rays stop at view distance/cache bounds; underwater rays stop at 96 blocks or the
+absorption limit. Unavailable cache slots are never sampled.
+
+Secondary hits use material textures and directional/ambient lighting, without
+additional AO or shadow rays. Water is excluded from secondary intersections to
+prevent recursion. Reflections therefore show solid terrain and sky, not other water
+surfaces; refraction models one interface. Fully fogged water skips both rays.
+No extra render pass or persistent textures. Water-heavy views now cost up to two
+additional geometry traversals per pixel; performance has not been profiled.
+
+`WATER_WAVE_STRENGTH` defaults to `0.035` (`0` disables ripples).
+`WATER_ABSORPTION` defaults to `0.22`; increase for murkier water.

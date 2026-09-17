@@ -10,6 +10,7 @@ function World.new(seed,viewDistance,terrainConfig)
     first=0,last=0,pendingCount=0,generated=0,terrain=Terrain.new(seed,terrainConfig)},World)
   self.maxHeight=self.terrain.maxHeight;self.spanOverflowCount=0
   self.forceSpans=terrainConfig and terrainConfig.forceSpans or false
+  self.shadowDistance=terrainConfig and terrainConfig.shadowDistance or 0
   for i=1,self.slots^2 do
     self.chunks[i]={data=ffi.new('uint16_t[256]'),spans=ffi.new('int16_t[2048]'),complex=false,surface=ffi.new('uint16_t[256]'),x=math.huge,y=math.huge,index=i,previous=0,next=0,queued=false,requestX=0,requestY=0,maximum=0}
   end
@@ -98,6 +99,11 @@ function World:enqueue(cx,cy)
   local chunk=self.chunks[self:slot(cx,cy)]
   if chunk.queued and chunk.requestX==cx and chunk.requestY==cy then return end
   self:removeRequest(chunk)
+  if self.maxData then
+    -- Restore retained slots on reversal; mark replaced slots before any shadow reads.
+    local code=chunk.x==cx and chunk.y==cy and (chunk.maximum+(chunk.complex and 512 or 0)) or 1024
+    self.maxData:setPixel(cx%self.slots,cy%self.slots,code,0,0,1);self.invalidated=true
+  end
   if chunk.x==cx and chunk.y==cy then return end
   chunk.requestX,chunk.requestY=cx,cy
   chunk.dispatched=false
@@ -123,6 +129,7 @@ function World:request(x,y)
     end end
   end
   self.cx,self.cy=cx,cy
+  if self.invalidated then self.maxTexture:replacePixels(self.maxData);self.invalidated=false end
 end
 function World:hasPending() return self.first~=0 end
 -- Budget remains in columns for harness compatibility; chunks are never partial.
@@ -158,6 +165,7 @@ function World:initGraphics(x,y,format)
   self.texture:setFilter('nearest','nearest')
   self.tile=love.image.newImageData(16,16,self.format=='r16f' and 'rg16f' or 'rg32f')
   self.maxData=love.image.newImageData(self.slots,self.slots,self.format)
+  for y=0,self.slots-1 do for x=0,self.slots-1 do self.maxData:setPixel(x,y,1024,0,0,1) end end
   self.maxTexture=love.graphics.newImage(self.maxData,{linear=true,mipmaps=false})
   self.maxTexture:setFilter('nearest','nearest')
   self.maxTile=love.image.newImageData(1,1,self.format)
@@ -224,7 +232,7 @@ function World:stopWorker()
   for _,chunk in ipairs(self.chunks) do chunk.dispatched=false end
 end
 function World:canRender(x,y)
-  local r=self.visibleDistance
+  local r=self.visibleDistance+self.shadowDistance
   if x-r<(self.cx-self.radius)*16 or x+r>=(self.cx+self.radius+1)*16 or
      y-r<(self.cy-self.radius)*16 or y+r>=(self.cy+self.radius+1)*16 then return false end
   local index=self.first

@@ -11,7 +11,19 @@ local CONFIG = {
   VIEW_DIST        = 556.0,             -- Max raycast distance (visibility cutoff)
   VSYNC            = true,            -- Synchronize presentation to display refresh
   MAX_FPS          = 0,              -- VSync-off limit; 0 = uncapped
+  DAY_CYCLE_SECONDS = 600.0,           -- Full day + night; use 1200 for a 20-minute cycle
+  SHADOWS_ENABLED  = true,
+  SHADOW_DISTANCE  = 96.0,            -- Solid sun shadows; supported range 0..128 blocks
+  SUN_STRENGTH     = 0.72,
+  AMBIENT_STRENGTH = 0.28,
+  NIGHT_AMBIENT_STRENGTH = 0.48,     -- Night visibility, including shaded terrain
+  MOON_STRENGTH    = 0.32,
+  WATER_WAVE_STRENGTH = 0.035,        -- Normal ripples only; block geometry stays fixed
+  WATER_ABSORPTION = 0.22,           -- Higher makes shallows less transparent
+  FOG_ENABLED     = true,
+  FOG_START       = 0.35,            -- Fraction of view distance; full fog at far limit
 
+  AA_ENABLED       = true,              -- F5: toggle temporal AA
   DEBUG_ENABLED    = false,             -- Debug HUD; F3 toggles at runtime
 
   CAVES            = true,            -- Cached volumetric caves / entrances
@@ -47,7 +59,7 @@ local jumpVelocity = math.sqrt(2.0 * CONFIG.GRAVITY * CONFIG.JUMP_PEAK_HEIGHT)
 local MAX_DDA_STEPS = math.ceil(CONFIG.VIEW_DIST * math.sqrt(2)) + 2
 
 -- ─────────────────── state variables ────────────────────────────────
-local world = World.new(CONFIG.SEED, CONFIG.VIEW_DIST, {background=true,caves=CONFIG.CAVES,SEA_LEVEL=CONFIG.SEA_LEVEL,
+local world = World.new(CONFIG.SEED, CONFIG.VIEW_DIST, {background=true,shadowDistance=CONFIG.SHADOW_DISTANCE,caves=CONFIG.CAVES,SEA_LEVEL=CONFIG.SEA_LEVEL,
   OCEAN_FLOOR=CONFIG.OCEAN_FLOOR, CONTINENT_SCALE=CONFIG.CONTINENT_SCALE, DETAIL_HEIGHT=CONFIG.DETAIL_HEIGHT})
 local SCR_W, SCR_H = 0, 0
 local RENDER_W, RENDER_H = 0, 0
@@ -59,6 +71,11 @@ local flying, lastSpacePress = false, -math.huge
 local velX, velY = 0, 0
 local currentFloor = eyeHeight - CONFIG.CAM_HEIGHT
 local physicsAccumulator = 0
+local waterPhase,waterParams=0,{0,0,0,0}
+local dayPhase = 1/6 -- Start at 60-degree elevation; 0 sunrise, 0.5 sunset, 0.75 midnight.
+local skyTint,lightTint,sunDirection = {0,0,0},{1,1,1},{0,0,1}
+local shadowCacheBounds={0,0,0,0}
+local zenithTint,directTint,fogRange={0,0,0},{1,1,1},{0,0}
 local previousPx, previousPy = px, py
 local previousEyeHeight = eyeHeight
 -- Render-only correction for grounded step-ups; never used by collision.
@@ -152,8 +169,22 @@ local camForward = { 0, 0, 0 }
 local camRight   = { 0, 0, 0 }
 local camUp      = { 0, 0, 0 }
 
-local raycastShader = love.graphics.newShader("#define MAX_DDA_STEPS " .. MAX_DDA_STEPS .. "\n" ..
+local raycastShader = love.graphics.newShader("#pragma language glsl3\n#define MAX_DDA_STEPS " .. MAX_DDA_STEPS .. "\n" ..
   assert(love.filesystem.read("raycast.glsl")))
+
+local temporalShader=love.graphics.newShader((assert(love.filesystem.read("temporal.glsl"))))
+local presentShader=love.graphics.newShader('vec4 effect(vec4 c,Image t,vec2 uv,vec2 sc) { return vec4(Texel(t,uv).rgb,1.0); }')
+local temporal={valid=false,frame=0,index=1,previousPosition={0,0,0},previousForward={0,0,0},previousRight={0,0,0},previousUp={0,0,0},jitter={0,0},delta={0,0,0},projection={0,0},inverseSize={0,0}}
+local function resetTemporal()
+  temporal.valid=false;temporal.frame=0
+end
+local jitterSequence={}
+local function halton(index,base)
+  local value,factor=0,1
+  while index>0 do factor=factor/base;value=value+(index%base)*factor;index=math.floor(index/base) end
+  return value-0.5
+end
+for i=1,16 do jitterSequence[i]={halton(i,2),halton(i,3)} end
 
 -- ─────────────────── collision handling ────────────────────────────
 local function getHighestFloorUnder(x, y, minHeight, maxHeight)
@@ -248,6 +279,13 @@ function love.keypressed(key, _, isrepeat)
     performance.lastCpuClock = os.clock()
     performance.sampleElapsed = 0
     hudElapsed = math.huge
+  elseif key == "f5" then
+    CONFIG.AA_ENABLED = not CONFIG.AA_ENABLED
+    resetTemporal()
+    hudElapsed = math.huge
+  elseif key == "f4" then
+    CONFIG.SHADOWS_ENABLED = not CONFIG.SHADOWS_ENABLED
+    resetTemporal()
   end
 end
 
@@ -260,12 +298,21 @@ local function updateProjection(w, h)
     if renderCanvas then renderCanvas:release() end
     renderCanvas = love.graphics.newCanvas(RENDER_W, RENDER_H, { format="rgba8", msaa=0, dpiscale=1 })
     renderCanvas:setFilter("nearest", "nearest")
+    if temporal.current then temporal.current:release();for _,canvas in ipairs(temporal.history) do canvas:release() end end
+    temporal.current=love.graphics.newCanvas(RENDER_W,RENDER_H,{format="rgba16f",dpiscale=1})
+    temporal.history={love.graphics.newCanvas(RENDER_W,RENDER_H,{format="rgba16f",dpiscale=1}),love.graphics.newCanvas(RENDER_W,RENDER_H,{format="rgba16f",dpiscale=1})}
+    temporal.current:setFilter("nearest","nearest")
+    for _,canvas in ipairs(temporal.history) do canvas:setFilter("nearest","nearest") end
+    resetTemporal()
   end
 
   local hfovRad = math.rad(CONFIG.FOV_DEG)
   local tanHalfHFOV = math.tan(hfovRad * 0.5)
   local tanHalfVFOV = tanHalfHFOV * (RENDER_H / RENDER_W)
 
+  if temporal.projection[1]~=tanHalfHFOV or temporal.projection[2]~=tanHalfVFOV then resetTemporal() end
+  temporal.projection[1],temporal.projection[2]=tanHalfHFOV,tanHalfVFOV
+  temporal.inverseSize[1],temporal.inverseSize[2]=1/RENDER_W,1/RENDER_H
   raycastShader:send("tanHalfHFOV", tanHalfHFOV)
   raycastShader:send("tanHalfVFOV", tanHalfVFOV)
 end
@@ -276,6 +323,10 @@ end
 
 -- ─────────────────── engine lifecycle ───────────────────────────────
 function love.load()
+  assert(type(CONFIG.SHADOW_DISTANCE)=='number' and CONFIG.SHADOW_DISTANCE>=0 and CONFIG.SHADOW_DISTANCE<=128,
+    'SHADOW_DISTANCE must be within 0..128 blocks')
+  assert(type(CONFIG.DAY_CYCLE_SECONDS)=='number' and CONFIG.DAY_CYCLE_SECONDS>0 and CONFIG.DAY_CYCLE_SECONDS<math.huge,
+    'DAY_CYCLE_SECONDS must be positive and finite')
   local dw, dh = love.window.getDesktopDimensions()
   love.window.setMode(dw, dh, {
     fullscreen = true,
@@ -432,6 +483,9 @@ local function updatePhysics(dt)
 end
 
 function love.update(dt)
+  waterPhase=(waterPhase+dt*0.25)%(math.pi*2)
+  world.shadowDistance=CONFIG.SHADOWS_ENABLED and CONFIG.SHADOW_DISTANCE or 0
+  dayPhase=(dayPhase+dt/CONFIG.DAY_CYCLE_SECONDS)%1
   if not world.worker then world:startWorker() end
   hudElapsed = hudElapsed + dt
   if CONFIG.DEBUG_ENABLED then updatePerformanceStats(dt) end
@@ -457,6 +511,41 @@ function love.quit()
 end
 
 function love.draw()
+  local angle=dayPhase*math.pi*2
+  sunDirection[1],sunDirection[2],sunDirection[3]=math.cos(angle)*0.8,math.cos(angle)*0.6,math.sin(angle)
+  local daylight=math.max(0,math.min(1,(sunDirection[3]+0.15)/0.4))
+  daylight=daylight*daylight*(3-2*daylight)
+  local twilight=math.max(0,1-math.abs(sunDirection[3])/0.3)
+  local warmth=twilight*0.6
+  skyTint[1]=(0.015+0.465*daylight)*(1-warmth)+0.65*warmth
+  skyTint[2]=(0.025+0.695*daylight)*(1-warmth)+0.25*warmth
+  skyTint[3]=(0.07+0.85*daylight)*(1-warmth)+0.14*warmth
+  lightTint[1]=0.55+0.25*daylight
+  lightTint[2]=0.65+0.25*daylight
+  lightTint[3]=0.85+0.15*daylight
+  -- Frame-wide colors/range are computed once on CPU, using reused arrays.
+  zenithTint[1],zenithTint[2],zenithTint[3]=0.012+0.168*daylight,0.02+0.40*daylight,0.055+0.705*daylight
+  if sunDirection[3]>=0 then
+    local golden=1-math.min(1,sunDirection[3]/0.65)
+    directTint[1],directTint[2],directTint[3]=1.0,0.97-0.19*golden,0.88-0.30*golden
+  else
+    directTint[1],directTint[2],directTint[3]=0.65,0.78,1.0
+  end
+  local fogStart=CONFIG.VIEW_DIST*math.max(0,math.min(0.99,CONFIG.FOG_START))
+  fogRange[1],fogRange[2]=fogStart,CONFIG.FOG_ENABLED and 1/(CONFIG.VIEW_DIST-fogStart) or 0
+  if raycastShader:hasUniform('zenithTint') then raycastShader:send('zenithTint',zenithTint) end
+  if raycastShader:hasUniform('directTint') then raycastShader:send('directTint',directTint) end
+  if raycastShader:hasUniform('fogRange') then raycastShader:send('fogRange',fogRange) end
+  if raycastShader:hasUniform('skyTint') then raycastShader:send('skyTint',skyTint) end
+  if raycastShader:hasUniform('lightTint') then raycastShader:send('lightTint',lightTint) end
+  raycastShader:send('sunDirection',sunDirection)
+  -- Fade direct light from zero at 12 degrees to full strength at 18 degrees.
+  local sunFade=math.max(0,math.min(1,(sunDirection[3]-0.20791169)/(0.30901699-0.20791169)))
+  if raycastShader:hasUniform('sunStrength') then raycastShader:send('sunStrength',CONFIG.SUN_STRENGTH*sunFade) end
+  if raycastShader:hasUniform('ambientStrength') then raycastShader:send('ambientStrength',CONFIG.NIGHT_AMBIENT_STRENGTH+(CONFIG.AMBIENT_STRENGTH-CONFIG.NIGHT_AMBIENT_STRENGTH)*daylight) end
+  if raycastShader:hasUniform('moonStrength') then raycastShader:send('moonStrength',CONFIG.MOON_STRENGTH*math.max(0,math.min(1,(-sunDirection[3]-0.20791169)/(0.30901699-0.20791169)))) end
+  if raycastShader:hasUniform('shadowsEnabled') then raycastShader:send('shadowsEnabled',CONFIG.SHADOWS_ENABLED) end
+  if raycastShader:hasUniform('shadowDistance') then raycastShader:send('shadowDistance',CONFIG.SHADOW_DISTANCE) end
   local interpolationAlpha = physicsAccumulator / CONFIG.FIXED_DT
   local renderPx = previousPx + (px - previousPx) * interpolationAlpha
   local renderPy = previousPy + (py - previousPy) * interpolationAlpha
@@ -477,18 +566,54 @@ function love.draw()
 
   -- Keep GPU coordinates near zero, even far from spawn.
   local originX, originY = math.floor(renderPx / 16) * 16, math.floor(renderPy / 16) * 16
+  waterParams[1],waterParams[2],waterParams[3],waterParams[4]=originX%32,originY%32,waterPhase,CONFIG.WATER_WAVE_STRENGTH
+  if raycastShader:hasUniform('waterParams') then raycastShader:send('waterParams',waterParams) end
+  if raycastShader:hasUniform('waterAbsorption') then raycastShader:send('waterAbsorption',CONFIG.WATER_ABSORPTION) end
   camPos[1], camPos[2], camPos[3] = renderPx - originX, renderPy - originY, renderEyeHeight
   cacheOffset[1], cacheOffset[2] = originX % world.size, originY % world.size
   raycastShader:send("camPos", camPos)
   raycastShader:send("cacheOffset", cacheOffset)
+  shadowCacheBounds[1],shadowCacheBounds[2]=(world.cx-world.radius)*16-originX,(world.cy-world.radius)*16-originY
+  shadowCacheBounds[3],shadowCacheBounds[4]=(world.cx+world.radius+1)*16-originX,(world.cy+world.radius+1)*16-originY
+  if raycastShader:hasUniform('shadowCacheBounds') then raycastShader:send('shadowCacheBounds',shadowCacheBounds) end
 
-  love.graphics.setCanvas(renderCanvas)
-  love.graphics.setBlendMode("replace") -- Full-screen shader overwrites every pixel.
+  if temporal.enabled~=CONFIG.AA_ENABLED or temporal.shadows~=CONFIG.SHADOWS_ENABLED then resetTemporal() end
+  temporal.enabled,temporal.shadows=CONFIG.AA_ENABLED,CONFIG.SHADOWS_ENABLED
+  temporal.delta[1],temporal.delta[2],temporal.delta[3]=renderPx-temporal.previousPosition[1],renderPy-temporal.previousPosition[2],renderEyeHeight-temporal.previousPosition[3]
+  local translation=0;local facing=0
+  for i=1,3 do translation=translation+temporal.delta[i]^2;facing=facing+camForward[i]*temporal.previousForward[i] end
+  if translation>64 or facing<0.8 then resetTemporal() end
+  local useTemporal=CONFIG.AA_ENABLED and raycastShader:hasUniform('temporalOutput')
+  temporal.jitter[1],temporal.jitter[2]=0,0
+  if useTemporal then local jitter=jitterSequence[temporal.frame%16+1];temporal.jitter[1],temporal.jitter[2]=jitter[1],jitter[2] end
+  if raycastShader:hasUniform('cameraJitter') then raycastShader:send('cameraJitter',temporal.jitter) end
+  if raycastShader:hasUniform('temporalOutput') then raycastShader:send('temporalOutput',useTemporal) end
+  love.graphics.setCanvas(useTemporal and temporal.current or renderCanvas)
+  love.graphics.setBlendMode("replace", "premultiplied") -- Full-screen shader overwrites every pixel.
   love.graphics.setColor(1, 1, 1, 1)
   world:bindSpans(raycastShader)
   love.graphics.setShader(raycastShader)
   love.graphics.rectangle("fill", 0, 0, RENDER_W, RENDER_H)
   love.graphics.setShader()
+  if useTemporal then
+    temporalShader:send('currentFrame',temporal.current)
+    temporalShader:send('historyFrame',temporal.history[temporal.index])
+    temporalShader:send('inverseSize',temporal.inverseSize)
+    temporalShader:send('projection',temporal.projection)
+    temporalShader:send('forward',camForward);temporalShader:send('right',camRight);temporalShader:send('up',camUp)
+    temporalShader:send('previousForward',temporal.previousForward);temporalShader:send('previousRight',temporal.previousRight);temporalShader:send('previousUp',temporal.previousUp)
+    temporalShader:send('cameraDelta',temporal.delta)
+    temporalShader:send('historyValid',temporal.valid)
+    temporalShader:send('historyWeight',math.min(temporal.frame/(temporal.frame+1),15/16))
+    temporal.index=3-temporal.index
+    love.graphics.setCanvas(temporal.history[temporal.index]);love.graphics.setShader(temporalShader)
+    love.graphics.rectangle('fill',0,0,RENDER_W,RENDER_H)
+    love.graphics.setCanvas(renderCanvas);love.graphics.setShader(presentShader)
+    love.graphics.draw(temporal.history[temporal.index]);love.graphics.setShader()
+    temporal.valid=true;temporal.frame=temporal.frame+1
+  end
+  temporal.previousPosition[1],temporal.previousPosition[2],temporal.previousPosition[3]=renderPx,renderPy,renderEyeHeight
+  for i=1,3 do temporal.previousForward[i]=camForward[i];temporal.previousRight[i]=camRight[i];temporal.previousUp[i]=camUp[i] end
   love.graphics.setBlendMode("alpha")
 
   -- Rebuild text at 10 Hz instead of formatting and laying it out every frame.
@@ -496,7 +621,7 @@ function love.draw()
     hudElapsed = 0
     if not hud then hud = love.graphics.newText(love.graphics.getFont()) end
     hud:clear()
-    hud:add(("Pitch: %.1f° | FOV: %d°"):format(math.deg(pitch), CONFIG.FOV_DEG), 0, 0)
+    hud:add(("Pitch: %.1f° | FOV: %d° | AA [F5]: %s"):format(math.deg(pitch), CONFIG.FOV_DEG, CONFIG.AA_ENABLED and "TAA" or "off"), 0, 0)
     hud:add(("FPS: %d | Frame: %.2f ms"):format(
       love.timer.getFPS(), performance.frameMs
     ), 0, 20)
@@ -523,7 +648,7 @@ function love.draw()
 
   love.graphics.setCanvas()
 
-  love.graphics.setBlendMode("replace")
+  love.graphics.setBlendMode("replace", "premultiplied")
   love.graphics.draw(renderCanvas, 0, 0, 0, SCR_W / RENDER_W, SCR_H / RENDER_H)
   love.graphics.setShader()
   love.graphics.setBlendMode("alpha")

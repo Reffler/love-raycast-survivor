@@ -1,0 +1,4 @@
+Native resolution: 1920x1080
+Renderer: OpenGL | 4.6 (Core Profile) Mesa 26.2.2-arch3.2 | AMD | AMD Radeon RX 6700 XT (radeonsi, navi22, ACO, DRM 3.64, 7.2.2-1-cachyos)
+1200 moving frames, render + readback: median 2.747 ms, p99 4.039 ms, max 4.369 ms
+Streaming: p99 0.308 ms, max 2.837 ms; resident chunks <= 7569

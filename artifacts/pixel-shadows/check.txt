@@ -1,0 +1,4 @@
+PASS: diagonal top shadows, 0.01-block translation across origin rebase, camera rotation (144154 shared samples), continuous sun moves whole texels
+PASS: X/Y wall grids, four solid spans, vertical cave roofs/openings, negative seams, distance limit, ceiling termination, chunk skipping, cache bounds, invalid slots and reversal
+PASS: moon shadows block cave roofs; moon backfaces, toggle and low-elevation cutoff
+PASS: low-sun cutoff, continuous daylight range, toggle, back-facing ceilings skip rays; water neither receives nor casts shadows

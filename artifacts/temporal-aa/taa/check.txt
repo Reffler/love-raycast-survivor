@@ -1,0 +1,7 @@
+PASS: XY reprojection, silhouette history limited to edge neighborhoods
+PASS: accumulation, disocclusion/depth/category rejection, water history limit, sky translation, screen bounds
+PASS: resize, F5/repeat, off-mode stability, F4, camera cut, teleport, FOV resets, HUD isolation
+MSE raw/resolved	116.26381799769	0.6238493441358
+PASS: static staircase RMS frame change raw 10.7826, TAA 0.7898 (8-bit RGB)
+MSE raw/resolved	116.21676878376	0.86427191840278
+PASS: moving/rebased staircase RMS frame change raw 10.7804, TAA 0.9297 (8-bit RGB)

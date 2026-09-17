@@ -1,0 +1,8 @@
+Renderer: OpenGL | 4.6 (Core Profile) Mesa 26.2.2-arch3.2 | AMD | AMD Radeon RX 6700 XT (radeonsi, navi22, ACO, DRM 3.64, 7.2.2-1-cachyos)
+1920x1080, 556 blocks, 96-block shadows; 200 frames after 32 warmups; readback included
+ground,14.1428,14.6305,16.6824
+moving-ground,14.1841,14.6715,14.6803
+horizon,10.7102,11.2821,11.5489
+downward,10.6895,10.9674,11.1460
+cave,9.2743,9.4532,9.4631
+cave-ceiling,6.2226,6.5410,6.7518

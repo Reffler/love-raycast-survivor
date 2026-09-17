@@ -1,0 +1,7 @@
+PASS: staircase, 17 tiny camera steps, deterministic repeats, four traces, bounded shade calls
+PASS: thin-grass-tops, 17 tiny camera steps, deterministic repeats, four traces, bounded shade calls
+PASS: mountain-ridge, 17 tiny camera steps, deterministic repeats, four traces, bounded shade calls
+PASS: pillars-diagonal, 17 tiny camera steps, deterministic repeats, four traces, bounded shade calls
+PASS: cave-arch-ceiling, 17 tiny camera steps, deterministic repeats, four traces, bounded shade calls
+PASS: water-boundary, 17 tiny camera steps, deterministic repeats, four traces, bounded shade calls
+Grouped versus independent shading: max RGB error 0.000009745, mean 0.000000000

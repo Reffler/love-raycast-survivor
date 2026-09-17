@@ -1,5 +1,6 @@
 local originalLoad=love.load
 function love.load()
+  CONFIG.AA_ENABLED=false -- Exact frame comparisons test geometry independently of temporal history.
   originalLoad();CONFIG.DEBUG_ENABLED=false
   local seed=tonumber(os.getenv('FLOW_SEED')) or 1337
   if world.seed~=seed then
