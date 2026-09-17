@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Xenobiology · Creature Lab</title>
+<style>
+:root{color-scheme:dark;--ink:#e2eee7;--muted:#899d98;--line:#ffffff18;--mint:#bef59b}*{box-sizing:border-box}body{margin:0;background:#101b1d;color:var(--ink);font:14px system-ui,sans-serif;overflow:hidden}#viewport{position:fixed;inset:0}canvas{display:block}header{position:absolute;top:30px;left:36px;right:36px;display:flex;justify-content:space-between;align-items:center;pointer-events:none}.brand{font-size:13px;letter-spacing:3px;text-transform:uppercase}.brand b{color:var(--mint)}.tag{font:11px monospace;letter-spacing:2px;color:var(--muted)}aside{position:absolute;left:36px;top:125px;width:240px;pointer-events:none}.eyebrow{color:var(--mint);font:11px monospace;letter-spacing:2px}h1{font-weight:450;font-size:42px;line-height:1.05;letter-spacing:-2px;margin:16px 0}#description{color:var(--muted);line-height:1.7}dl{border-top:1px solid var(--line);margin-top:28px}aside{max-height:calc(100vh - 245px);overflow-y:auto;pointer-events:auto;scrollbar-width:thin}dd{max-width:140px;text-align:right;line-height:1.4}dl div{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:12px 0}dt{color:var(--muted)}dd{margin:0;font:12px monospace}.swatches{display:flex;gap:7px;margin-top:20px}.swatches span{width:24px;height:7px;border-radius:2px}.panel{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);background:#142224e8;border:1px solid #ffffff22;box-shadow:0 12px 40px #0005;backdrop-filter:blur(16px);border-radius:18px;padding:16px;display:flex;gap:10px;align-items:center}button,input,select{font:inherit;color:var(--ink);background:#ffffff08;border:1px solid #ffffff1c;border-radius:9px;padding:12px;outline-offset:3px}button{cursor:pointer;white-space:nowrap}button:hover{background:#ffffff18}button.primary{background:var(--mint);color:#20301c;border-color:var(--mint);font-weight:650;padding:13px 23px}button.primary:hover{background:#d5ffba}input{width:110px;font:12px monospace}label{font-size:11px;color:var(--muted);display:flex;flex-direction:column;gap:6px}#silhouette{position:absolute;right:36px;bottom:88px}#spin{position:absolute;right:36px;bottom:36px}.hint{position:absolute;right:36px;top:100px;color:var(--muted);font:11px monospace;text-align:right;line-height:2}#status{position:absolute;left:50%;top:48%;transform:translate(-50%,-50%);text-align:center;max-width:420px;line-height:1.6}#serial{position:absolute;left:36px;bottom:38px;font:11px monospace;color:var(--muted);letter-spacing:1px}@media(max-width:900px){aside{top:90px;left:20px;width:180px}h1{font-size:30px}header{left:20px;right:20px;top:20px}.hint,.tag,#serial{display:none}.panel{bottom:15px;padding:10px;gap:6px;width:calc(100% - 24px);justify-content:center;flex-wrap:wrap}.panel button{padding:10px}.panel input{width:90px}#spin{top:80px;right:16px;bottom:auto}#silhouette{top:130px;right:16px;bottom:auto}dl{margin-top:14px}#description{font-size:12px}}@media(max-height:650px){aside{top:75px}dl,.swatches{display:none}}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+</head><body>
+<div id="viewport"></div><header><div class="brand"><b>✳</b> Xenobiology <span style="opacity:.4">/</span> Creature lab</div><div class="tag">CUBOID LIFE · FIELD STATION 004</div></header>
+<aside><div class="eyebrow">NEW SPECIMEN</div><h1 id="name">Discover<br>something alien.</h1><p id="description">A small laboratory for impossible, block-built life.</p><dl><div><dt>Morphology</dt><dd id="type">—</dd></div><div><dt>Habitat</dt><dd id="habitat">—</dd></div><div><dt>Feeding role</dt><dd id="temper">—</dd></div><div><dt>Supports</dt><dd id="limbs">—</dd></div><div><dt>Balance</dt><dd id="balance">—</dd></div><div><dt>Mass proxy</dt><dd id="mass">—</dd></div></dl><div class="swatches" id="swatches"></div></aside>
+<div class="hint">DRAG TO ORBIT<br>SCROLL TO EXPLORE<br>SPACE FOR NEW LIFE</div><div id="status" role="status">Sequencing a new lifeform…</div><div id="serial">SPECIMEN / —</div>
+<div class="panel"><label>BODY PLAN<select id="plan"><option value="any">Surprise me</option><option value="bird">Beaked biped</option><option value="dragon">Dragon / wyvern</option><option value="worm">Segmented worm</option><option value="centipede">Many-legged arthropod</option><option value="serpent">Long-necked serpent</option><option value="tentacled">Tentacled walker</option><option value="leviathan">Land leviathan</option><option value="mantis">Mantis hunter</option><option value="grazer">Crown grazer</option><option value="runner">Dune runner</option><option value="crawler">Reef crawler</option><option value="amphibian">Marsh hopper</option><option value="glider">Canopy glider</option><option value="floater">Sky drifter</option></select></label><label>GENOME<input id="seed" maxlength="40" aria-label="Genome seed" placeholder="Any seed"></label><button id="grow" title="Regenerate this genome">Grow</button><button class="primary" id="random">↗ Random creature</button></div><button id="silhouette" aria-pressed="false">Silhouette</button><button id="spin" aria-pressed="true">Auto orbit · on</button>
+<script type="module">
+try {
+const THREE=await import('three');const {OrbitControls}=await import('three/addons/controls/OrbitControls.js');
+const $=id=>document.getElementById(id), V=(x,y,z)=>new THREE.Vector3(x,y,z);
+const scene=new THREE.Scene();scene.background=new THREE.Color('#101b1d');scene.fog=new THREE.Fog('#101b1d',17,40);
+const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,1.75));renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.25;$('viewport').append(renderer.domElement);
+const camera=new THREE.PerspectiveCamera(38,innerWidth/innerHeight,.1,100);camera.position.set(8,5.5,10);
+const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.enablePan=false;controls.minDistance=5;controls.maxDistance=22;controls.maxPolarAngle=Math.PI*.49;controls.autoRotate=true;controls.autoRotateSpeed=.65;controls.target.set(0,2,0);
+scene.add(new THREE.HemisphereLight('#c5e4e3','#263127',2));
+function light(color,power,pos,shadow=false){const l=new THREE.DirectionalLight(color,power);l.position.copy(pos);l.castShadow=shadow;if(shadow){l.shadow.mapSize.set(2048,2048);Object.assign(l.shadow.camera,{left:-8,right:8,top:8,bottom:-8,near:.1,far:30});l.shadow.normalBias=.035;l.shadow.bias=-.0001}scene.add(l)}
+light('#ffdfb4',3,V(4,9,5),true);light('#74d9d3',2.5,V(-6,5,-5));light('#94aaff',.6,V(2,4,-8));
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshStandardMaterial({color:'#101b1d',roughness:.95}));floor.rotation.x=-Math.PI/2;floor.position.y=-.23;floor.receiveShadow=true;scene.add(floor);
+const stage=new THREE.Mesh(new THREE.CylinderGeometry(4.5,4.65,.22,96),new THREE.MeshStandardMaterial({color:'#253538',roughness:.7,metalness:.25}));stage.position.y=-.11;stage.receiveShadow=true;scene.add(stage);
+const ring=new THREE.Mesh(new THREE.TorusGeometry(4.38,.012,8,128),new THREE.MeshBasicMaterial({color:'#658e80'}));ring.rotation.x=Math.PI/2;ring.position.y=.012;scene.add(ring);
+const blockGeometry=new THREE.BoxGeometry(2,2,2);let creature,animated=[],resources=[],rng;
+function seeded(s){let h=2166136261;for(const c of s)h=Math.imul(h^c.charCodeAt(0),16777619);return()=>{h+=0x6D2B79F5;let t=Math.imul(h^h>>>15,1|h);t^=t+Math.imul(t^t>>>7,61|t);return((t^t>>>14)>>>0)/4294967296}}
+const r=(a=0,b=1)=>a+(b-a)*rng(),pick=a=>a[Math.floor(r(0,a.length))];
+function material(color,extra={}){const m=new THREE.MeshStandardMaterial({color,roughness:.58,...extra});resources.push(m);return m}
+function mesh(geo,mat,parent=creature){const m=new THREE.Mesh(geo,mat);m.castShadow=true;m.receiveShadow=true;parent.add(m);return m}
+function block(pos,scale,mat,parent=creature){const m=mesh(blockGeometry,mat,parent);m.position.copy(pos);m.scale.copy(scale);return m}
+// Jointed cuboid appendages. Shared box geometry, no round tube meshes.
+function tendril(points,radii,mat,parent=creature){const group=new THREE.Group();parent.add(group);for(let i=0;i<points.length-1;i++){const start=points[i],end=points[i+1],delta=end.clone().sub(start),length=delta.length();if(length<.001)continue;const radius=Math.max(.012,(radii[i]+radii[i+1])*.5),part=block(start.clone().add(end).multiplyScalar(.5),V(radius,length*.5+radius*.15,radius),mat,group);part.quaternion.setFromUnitVectors(V(0,1,0),delta.normalize())}return group}
+// Project onto the polygon's dominant plane, triangulate, then interpolate bounded
+// barycentric positions. The old XZ plane equation exploded on near-vertical wings.
+function membrane(points,mat,parent){
+ const normal=V(0,0,0);for(let i=0;i<points.length;i++)normal.add(points[i].clone().cross(points[(i+1)%points.length]));
+ const values=[Math.abs(normal.x),Math.abs(normal.y),Math.abs(normal.z)],axis=values.indexOf(Math.max(...values));
+ if(values[axis]<1e-7)return;
+ const uvAxes=[0,1,2].filter(a=>a!==axis),coords=points.map(p=>p.toArray()),uv=coords.map(p=>new THREE.Vector2(p[uvAxes[0]],p[uvAxes[1]]));
+ const triangles=THREE.ShapeUtils.triangulateShape(uv,[]);if(!triangles.length)return;
+ const minU=Math.min(...uv.map(p=>p.x)),maxU=Math.max(...uv.map(p=>p.x)),minV=Math.min(...uv.map(p=>p.y)),maxV=Math.max(...uv.map(p=>p.y));
+ const step=Math.max(.16,Math.sqrt((maxU-minU)*(maxV-minV)/480)),cells=[];
+ for(let u=minU+step/2;u<maxU;u+=step)for(let v=minV+step/2;v<maxV;v+=step){
+  for(const [ia,ib,ic] of triangles){const a=uv[ia],b=uv[ib],c=uv[ic],den=(b.y-c.y)*(a.x-c.x)+(c.x-b.x)*(a.y-c.y);if(Math.abs(den)<1e-8)continue;
+   const wa=((b.y-c.y)*(u-c.x)+(c.x-b.x)*(v-c.y))/den,wb=((c.y-a.y)*(u-c.x)+(a.x-c.x)*(v-c.y))/den,wc=1-wa-wb;
+   if(Math.min(wa,wb,wc)<-1e-6)continue;
+   const p=[0,0,0];p[uvAxes[0]]=u;p[uvAxes[1]]=v;p[axis]=wa*coords[ia][axis]+wb*coords[ib][axis]+wc*coords[ic][axis];
+   cells.push(new THREE.Vector3(...p));break;
+  }
+ }
+ if(!cells.length)return;
+ const tiles=new THREE.InstancedMesh(blockGeometry,mat,cells.length),matrix=new THREE.Matrix4(),rotation=new THREE.Quaternion();
+ const thickness=V(step*.51,step*.51,step*.51); // Connected voxel membrane, even at steep slopes.
+ cells.forEach((p,i)=>{matrix.compose(p,rotation,thickness);tiles.setMatrixAt(i,matrix)});
+ tiles.instanceMatrix.needsUpdate=true;tiles.computeBoundingBox();tiles.computeBoundingSphere();tiles.castShadow=true;tiles.receiveShadow=true;parent.add(tiles);resources.push(tiles);
+}
+function skinTexture(base,accent){const c=document.createElement('canvas');c.width=c.height=16;const ctx=c.getContext('2d');ctx.fillStyle=base;ctx.fillRect(0,0,16,16);for(let i=0;i<42;i++){ctx.globalAlpha=r(.025,.07);ctx.fillStyle=r()<.5?'#fff':'#000';ctx.fillRect(Math.floor(r(0,16)),Math.floor(r(0,16)),1,1)}for(let i=0;i<5;i++){ctx.globalAlpha=r(.08,.18);ctx.fillStyle=accent;ctx.fillRect(Math.floor(r(0,15)),Math.floor(r(0,15)),Math.floor(r(1,4)),Math.floor(r(1,3)))}const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;t.magFilter=THREE.NearestFilter;t.minFilter=THREE.NearestMipmapLinearFilter;resources.push(t);return t}
+
+const palettes=[['#598f80','#c5d8a0','#e19d65'],['#a66277','#e4c5a2','#76d3c9'],['#7678ac','#d3c8e0','#e5b45e'],['#b18a52','#ead9a6','#68a0a1'],['#567487','#b4d1c6','#dd795f'],['#829253','#dfd5a1','#af6782'],['#766489','#d6b8bc','#a4dcac']];
+// Functional genome: ecological drivers -> masses -> leverage -> supports -> details.
+// Volumes are cuboid proxies, not a biomechanics simulation.
+const plans={bird:1,dragon:1,worm:1,centipede:1,serpent:1,tentacled:1,leviathan:1,mantis:1,grazer:1,runner:1,crawler:1,amphibian:1,glider:1,floater:1};
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function anatomy(seed,requested){
+ const random=seeded(seed+'|anatomy-v4'),range=(a,b)=>a+(b-a)*random(),choose=a=>a[Math.floor(random()*a.length)];
+ const type=requested==='any'?choose(Object.keys(plans)):requested;
+ const segmented=['worm','centipede','serpent'].includes(type);
+ const variant=choose(({dragon:['wyvern','drake','lindworm','sky serpent','armored drake'],bird:['raptor','wader','flightless','fan bird','spear fisher'],worm:['burrower','ribbon','armored grub','eyed annelid'],centipede:['razor','armored','stilted'],serpent:['cobra','river serpent','crested'],tentacled:['cuttle','octopod','tripod','ribbon arms'],leviathan:['humpback','broadjaw','sailback'],mantis:['orchid','reaper','shield']})[type]||['towering','barrel','low slung','lean','hunched']);
+ let gait=choose(({bird:['spring','stilt'],dragon:['spring','sprawl','pillar'],worm:['slither'],centipede:['sprawl','stilt'],serpent:['slither'],tentacled:['tentacles'],leviathan:['pillar','knuckle'],mantis:['stilt','spring'],grazer:['pillar','stilt'],runner:['spring','knuckle'],crawler:['sprawl','knuckle'],amphibian:['sprawl','spring'],glider:['stilt','spring'],floater:['float']})[type]);
+ const diet=choose(['dragon','mantis','serpent'].includes(type)?['predator']:type==='grazer'?['browser','browser','detritivore']:['predator','browser','detritivore']);
+ const habitat=choose(['desert','wetlands','reef','highlands']);
+ const headSource=({bird:'avian',dragon:'draconic',worm:'annelid',centipede:'arthropod',serpent:'reptile',tentacled:'cephalopod',leviathan:'cetacean',mantis:'mantis'})[type]||choose(['cetacean','mantis','tapir','ray','reptile']);
+ const beak=choose(['hook','spear','scoop','split','crusher']);
+ let wing=choose(type==='bird'?['feather fan','swept feathers','stub feathers','four feathers']:type==='dragon'?['bat','sail','four membranes','feather fan','none']:type==='glider'?['sail','insect','four membranes']:type==='mantis'?['insect','beetle shell','none']:['none','none','none','insect','stub feathers']);
+ if(segmented)wing=type==='serpent'&&random()<.22?'sail':'none';
+ let neck=choose(type==='bird'?['crane','swan','short']:type==='dragon'?['swan','serpentine','short','crane']:segmented?['short','raised']:['short','short','crane','swan']);
+ const foot=choose(type==='bird'?['talons','webbed']:type==='centipede'?['claws','pincers']:type==='grazer'?['hooves','paws','hands']:['claws','hands','paws','hooves','talons','pincers']);
+ const eyes=choose(type==='worm'?['flank rows','crown six','stalks','ring ten']:type==='centipede'?['four eyes','flank rows','crown six']:type==='tentacled'?['stalks','four eyes','paired','cyclops']:['paired','paired','four eyes','crown six','stalks','cyclops']);
+ const tailStyle=choose(type==='bird'?['feather fan','forked','plume']:segmented?['none']:['whip','club','forked','scorpion','paddle','plume','prehensile','none']);
+ const tusks=choose(['none','none','sabre','upturned','spiral','shovel']);
+ const tentacleStyle=choose(['suckered','ribbon','grasping','barbed']);
+ const armCount=type==='tentacled'?choose([4,6,8,10,12]):type==='floater'?choose([4,6,10]):0;
+ const armPairs=segmented||type==='bird'||type==='tentacled'?0:choose([0,0,1,2]);
+ const horns=choose(['swept','antlers','crown','single','none']);
+ const defense=diet==='detritivore'?'carapace':choose(['tusks','crusher','none','none']);
+ const focus=segmented?'central':choose(['front','rear','central']);
+ const size=range(.8,1.3),armored=diet==='detritivore'||random()<.3;
+ let L=range(.95,1.9)*size,W=range(.48,1.0)*size,H=range(.45,.92)*size;
+ if(variant==='towering'||variant==='humpback'){H*=1.4;L*=.85}
+ if(variant==='barrel'||variant==='broadjaw'){W*=1.35;L*=.85}
+ if(variant==='low slung'){gait='sprawl';H*=.7;L*=1.35}
+ if(type==='bird'){L*=.75;W*=.8;H*=1.3;if(variant==='flightless'){wing='stub feathers';W*=1.35}if(variant==='wader')neck='crane'}
+ if(type==='dragon'){L*=1.25;W*=.9;if(variant==='lindworm'){wing='none';L*=1.45}if(variant==='sky serpent'){neck='serpentine';W*=.75}}
+ if(type==='tentacled'){L*=.65;H*=1.6;W*=1.05}
+ if(type==='leviathan'){L*=1.2;W*=1.3;H*=1.1}
+ if(type==='mantis'){W*=.7;H*=1.2}
+ if(segmented){L=range(2.5,4.2)*size;W=range(.38,.82)*size;H=type==='worm'?W*.8:W*.55}
+ const segments=segmented?choose([7,9,11,13,15]):0;
+ const tailed=tailStyle!=='none'&&!segmented&&type!=='tentacled';
+ if(!tailed&&!segmented&&type!=='tentacled'){L*=.83;W*=1.15}
+ const main={x:W,y:H,z:L*.57,at:focus==='front'?L*.4:focus==='rear'?-L*.4:0},minor={x:W*.7,y:H*.7,z:L*.52,at:focus==='front'?-L*.5:L*.5};
+ if(focus!=='central')main.x=minor.x*minor.y*minor.z*7/3/(main.y*main.z);else main.z=L*.8;
+ const coreVolume=segmented?8*W*H*L*.8:8*(main.x*main.y*main.z+minor.x*minor.y*minor.z);
+ const skull=range(.42,.75)*size*(type==='worm'?1.2:1),head={x:skull*(headSource==='ray'?1.5:headSource==='mantis'?1.25:range(.8,1.15)),y:skull*(headSource==='cephalopod'?1:.78),z:skull*(headSource==='cetacean'?1.4:range(.65,1.1))};
+ const headMass=8*head.x*head.y*head.z*(armored?1.25:1),headRatio=headMass/coreVolume;
+ const neckLength=({short:.25,raised:.8,crane:3.3,swan:2.5,serpentine:3.4}[neck])*size/(1+headRatio*2.5);
+ const neckRadius=clamp(Math.sqrt(headMass)*.14,.14*size,.6*size);
+ if(headRatio>.5&&neck!=='short')neck='short';
+ if(coreVolume+headMass>34&&!segmented&&!['dragon','tentacled','bird','glider','floater'].includes(type))gait='pillar';
+ const clearance=gait==='slither'?.08:gait==='tentacles'?1.0*size:gait==='stilt'?range(1.8,3.0)*size:gait==='sprawl'?.22*size:gait==='pillar'?.9*size:gait==='knuckle'?.65*size:gait==='float'?2.3*size:1.35*size;
+ const effectiveNeck=neck==='short'?.25*size:neckLength;
+ const Y=H+clearance,headY=Y+(neck==='short'?(diet==='detritivore'?-H*.15:.15):effectiveNeck),headZ=L*.8+(neck==='serpentine'?.6:neck==='swan'?.12:.3)*effectiveNeck;
+ const tailLength=tailed?clamp(L*(tailStyle==='whip'?1.6:1.0)+headMass*.18,.7,4.2):0,tailRadius=tailed?clamp(Math.sqrt(headMass*(headZ+.3)/(tailLength*7)),.13,W*.6):0;
+ const tailMass=tailRadius*tailRadius*tailLength*3,mainMass=8*main.x*main.y*main.z,minorMass=8*minor.x*minor.y*minor.z,mass=coreVolume+headMass+tailMass;
+ const com=(mainMass*main.at+minorMass*minor.at+headMass*headZ-tailMass*(L*.75+tailLength*.45))/mass;
+ const legs=['worm','serpent','tentacled','floater'].includes(type)?0:type==='centipede'?choose([10,14,18,22]):type==='bird'?2:type==='dragon'?(variant==='wyvern'||variant==='lindworm'?2:choose([4,4,6])):type==='crawler'?choose([4,6,8,10]):type==='mantis'?choose([4,6]):gait==='spring'?choose([2,4]):choose([4,4,6]);
+ const radius=clamp(.13*Math.sqrt(mass/Math.max(legs,1))*(gait==='pillar'?1.35:gait==='stilt'?.7:1),.075*size,.5*size),spread=gait==='sprawl'?W*.9:gait==='knuckle'?W*.45:radius*.7;
+ const supportFront=Math.max(L*.7,com+L*.35),supportBack=Math.min(-L*.65,com-L*.35);
+ const thermal=segmented?'segment vents':type==='tentacled'?'mantle siphon':type==='bird'?'feather fan':type==='dragon'?'dorsal plates':gait==='float'?'air sacs':habitat==='desert'?'cooling sail':habitat==='wetlands'?'throat sac':habitat==='reef'?'rib spiracles':'insulating mantle';
+ const signature=[wing!=='none'?wing+' wings':null,neck!=='short'?neck+' neck':null,eyes,legs?foot:tentacleStyle+' arms',tailLength?tailStyle+' tail':null].filter(Boolean).join(', ');
+ const scarSide=choose([-1,1]),bodyCurve=range(.12,.55),wingSpan=range(1.6,3.0)*size;
+ const traits=[wing,neck,foot,eyes,tailStyle,tusks,tentacleStyle,String(armCount),String(armPairs),horns,beak,String(legs),variant];
+ const descriptor=[L/(W*2),clearance/(H*2),headMass/mass,focus==='front'?1:focus==='rear'?0:.5,tailLength/(2*L),head.x/head.z,legs/22,spread/W,effectiveNeck/(L*2),armCount/12,wing==='none'?0:wingSpan/4,segments/15].map((v,i)=>clamp(v/([3,4,.5,1,2,3,1,1,2,1,1,1][i]),0,1));
+ const niche=[type,wing,neck,eyes,tailStyle,legs,Math.floor(descriptor[0]*3)].join(':');
+ return {seed,type,beak,variant,gait,diet,habitat,headSource,focus,size,armored,L,W,H,main,minor,coreVolume,head,headMass,headRatio,neckLength:effectiveNeck,neckRadius,clearance,Y,headY,headZ,tailLength,tailRadius,mass,com,legs,radius,spread,supportFront,supportBack,thermal,defense,signature,scarSide,descriptor,niche,traits,wing,neck,foot,eyes,tailStyle,tusks,tentacleStyle,armCount,armPairs,horns,segmented,segments,bodyCurve,wingSpan,palette:choose(palettes),quality:1/(1+headRatio)};
+}
+const archiveKey='xenobiology-diversity-v4';let archive=[];
+try{const saved=JSON.parse(localStorage.getItem(archiveKey)||'[]');if(Array.isArray(saved))archive=saved.filter(x=>typeof x.niche==='string'&&typeof x.seed==='string'&&Array.isArray(x.descriptor)&&x.descriptor.length===12&&x.descriptor.every(Number.isFinite)&&Array.isArray(x.traits)&&x.traits.length===13).slice(-256)}catch{}
+function genomeDistance(a,b){const shape=Math.sqrt(a.descriptor.reduce((s,v,i)=>s+(v-b.descriptor[i])**2,0)/12),parts=a.traits.reduce((n,t,i)=>n+(t!==b.traits[i]?1:0),0)/13;return shape*.6+parts*.4}
+function novelty(g){const relatives=archive.filter(a=>a.type===g.type);return relatives.length?Math.min(...relatives.map(a=>genomeDistance(g,a))):1}
+function remember(g){const entry={niche:g.niche,descriptor:g.descriptor,traits:g.traits,quality:g.quality,seed:g.seed,type:g.type};if(!archive.some(a=>a.seed===g.seed&&a.type===g.type))archive.push(entry);archive=archive.slice(-256);try{localStorage.setItem(archiveKey,JSON.stringify(archive))}catch{}}
+let silhouette=false,liveGenome;
+const silhouetteMaterial=new THREE.MeshBasicMaterial({color:'#091113'});
+function setSilhouette(){if(creature)creature.traverse(o=>{if(o.isMesh){o.userData.originalMaterial??=o.material;o.material=silhouette?silhouetteMaterial:o.userData.originalMaterial}});$('silhouette').setAttribute('aria-pressed',String(silhouette));$('silhouette').textContent=silhouette?'Color view':'Silhouette'}
+function buildExtremity(style,position,radius,side,m,parent=creature){
+ const root=new THREE.Group();root.position.copy(position);parent.add(root);
+ const R=radius;
+ if(style==='hooves'){for(const s of [-1,1])block(V(s*R*.72,0,R*.35),V(R*.6,R*.65,R*1.25),m.horn,root);return root}
+ if(style==='pincers'){block(V(0,0,0),V(R,R*.5,R),m.skin,root);for(const s of [-1,1])tendril([V(s*R*.7,0,R*.6),V(s*R*1.5,0,R*1.5),V(s*R*.6,0,R*2.8)],[R*.45,R*.32,R*.08],m.horn,root);return root}
+ const palm=style==='hands';block(V(0,0,0),V(R*(palm?1.1:1.35),R*.5,R*(palm?1.2:1.5)),m.skin,root);
+ const digits=style==='talons'?3:palm?4:3;
+ for(let i=0;i<digits;i++){
+  const x=(i-(digits-1)/2)*R*.65,len=R*(palm?2.6:style==='talons'?3.0:1.35)*(1-Math.abs(i-(digits-1)/2)*.12);
+  const points=[V(x,0,R*.8),V(x*1.2,0,R*.8+len*.65),V(x*1.3,-R*.18,R*.8+len)];
+  tendril(points,[R*.29,R*.25,R*.16],palm?m.skin:m.belly,root);
+  if(style==='claws'||style==='talons'||style==='paws')tendril([points[2],points[2].clone().add(V(0,R*.06,R*.38)),points[2].clone().add(V(0,-R*.18,R*.68))],[R*.16,R*.12,.01],m.horn,root);
+ }
+ if(palm)tendril([V(-side*R,0,0),V(-side*R*1.8,0,R*.4),V(-side*R*1.75,-R*.15,R*1.15)],[R*.34,R*.27,R*.2],m.skin,root);
+ if(style==='talons')tendril([V(0,0,-R*.7),V(0,0,-R*1.5),V(0,-R*.2,-R*1.9)],[R*.25,R*.18,.02],m.horn,root);
+ if(style==='webbed')block(V(0,-R*.15,R*1.3),V(R*1.7,R*.15,R*1.35),m.accent,root);
+ return root;
+}
+function buildWings(g,m){
+ if(g.wing==='none')return;
+ const pairs=['insect','four membranes','four feathers'].includes(g.wing)?2:1;
+ for(let pair=0;pair<pairs;pair++)for(const side of [-1,1]){
+  const wing=new THREE.Group();wing.position.set(side*g.main.x*.8,g.Y+g.H*.55,g.L*(.2-pair*.65));creature.add(wing);
+  const span=g.wingSpan*(pair?.72:1)*(g.wing==='stub feathers'?.42:1);
+  animated.push({node:wing,kind:'wing',sign:side,phase:pair*.7,rest:side*(pair?-.08:.03)});
+  if(g.wing.includes('feather')){
+   const elbow=V(side*span*.45,.20,-.25);tendril([V(0,0,0),elbow,V(side*span,.3,-.5)],[.17,.12,.04],m.skin,wing);
+   const swept=g.wing==='swept feathers';
+   for(let i=0;i<8;i++){const root=V(side*span*(.23+i*.095),.17,-.13-i*.04),end=root.clone().add(V(side*.12,-.05,-span*(swept?.7:.45)*(1-i*.045)));tendril([root,end],[.105,.075],i%2?m.accent:m.belly,wing)}
+  }else if(g.wing==='beetle shell'){
+   for(let i=0;i<3;i++){const plate=block(V(side*(.2+i*.24),.10-i*.06,-g.L*.3),V(.18,.13,g.L*.55),m.accent,wing);plate.rotation.z=-side*.15}
+  }else{
+   const insect=g.wing==='insect',sail=g.wing==='sail',rise=insect?.15:sail?span*.85:span*.55;
+   const a=V(0,0,0),b=V(side*span*.4,rise*.75,-.15),c=V(side*span,rise,-span*.2),d=V(side*span*.72,rise*.2,-span*(insect?.55:.8)),e=V(0,-.06,-g.L*.6);
+   membrane([a,b,c,d,e],m.accent,wing);tendril([a,b,c],[.14,.09,.025],m.skin,wing);
+   for(const end of [d,e])tendril([b,b.clone().lerp(end,.55),end],[.07,.045,.014],m.horn,wing);
+  }
+ }
+}
+function buildTail(g,m){
+ if(!g.tailLength)return;
+ const tail=new THREE.Group();tail.position.set(0,g.Y-g.H*.2,-g.L*.75);creature.add(tail);animated.push({node:tail,kind:'tail',phase:r(0,6),amplitude:.06/(1+g.headRatio)});
+ const t=g.tailLength,rr=g.tailRadius;
+ let points=[V(0,0,0),V(0,0,-t*.35),V(g.scarSide*.15,.1,-t*.72),V(g.scarSide*.25,.15,-t)];
+ if(g.tailStyle==='scorpion')points=[V(0,0,0),V(0,.3,-t*.3),V(0,t*.65,-t*.55),V(0,t*.85,-t*.2),V(0,t*.67,.1)];
+ if(g.tailStyle==='prehensile')points=[V(0,0,0),V(0,.1,-t*.4),V(.4,t*.4,-t*.8),V(.7,t*.7,-t*.55),V(.4,t*.55,-t*.4)];
+ tendril(points,points.map((_,i)=>Math.max(.025,rr*(1-i/(points.length-.6)))),m.skin,tail);
+ const tip=points.at(-1);
+ if(g.tailStyle==='club')block(tip,V(rr*1.8,rr*1.55,rr*2),m.accent,tail);
+ if(g.tailStyle==='paddle')block(tip,V(rr*2.7,.07,rr*2),m.accent,tail);
+ if(g.tailStyle==='forked')for(const s of [-1,1])tendril([points.at(-2),tip.clone().add(V(s*.32,.08,-.15)),tip.clone().add(V(s*.55,.18,-.45))],[rr*.5,rr*.25,.015],m.skin,tail);
+ if(g.tailStyle==='feather fan'||g.tailStyle==='plume')for(let i=-2;i<=2;i++){const feather=block(tip.clone().add(V(i*.14,0,-.3)),V(.10,g.tailStyle==='plume'?.14:.055,.45),i%2?m.belly:m.accent,tail);feather.rotation.y=i*.26}
+ if(g.tailStyle==='scorpion')tendril([tip,tip.clone().add(V(0,-.2,.25)),tip.clone().add(V(0,-.4,.30))],[.12,.08,.005],m.horn,tail);
+}
+function buildTusks(g,m,head){
+ if(g.tusks==='none')return;const h=g.head;
+ for(const side of [-1,1]){
+  const root=V(side*h.x*.88,-h.y*.45,h.z*.9),length=g.size*(side===g.scarSide?.78:1.05);let points;
+  if(g.tusks==='spiral')points=[root,root.clone().add(V(side*.3,0,length*.45)),root.clone().add(V(side*.4,.5,length*.65)),root.clone().add(V(side*.1,.65,length*.35)),root.clone().add(V(0,.5,length*.2))];
+  else if(g.tusks==='sabre')points=[root,root.clone().add(V(side*.12,-length*.5,.18)),root.clone().add(V(side*.1,-length,.24))];
+  else if(g.tusks==='shovel')points=[root,root.clone().add(V(side*.12,-.1,length*.65)),root.clone().add(V(side*.45,.05,length))];
+  else points=[root,root.clone().add(V(side*.22,.12,length*.5)),root.clone().add(V(side*.25,length*.75,length*.72))];
+  tendril(points,points.map((_,i)=>Math.max(.015,.14*g.size*(1-i/(points.length-.5)))),m.horn,head);
+ }
+}
+function buildEyes(g,m,head){
+ const h=g.head;
+ function eye(position,yaw=0,size=1,parent=head){
+  const root=new THREE.Group();root.position.copy(position);root.rotation.y=yaw;parent.add(root);const e=clamp(Math.min(h.x,h.y)*.36,.11,.23)*size;
+  block(V(0,0,0),V(e*1.32,e*1.2,.06),m.black,root);block(V(0,0,.065),V(e*1.12,e,.02),m.white,root);block(V(0,0,.091),V(e*.72,e*.8,.018),m.iris,root);block(V(0,0,.113),V(e*(g.type==='dragon'?.22:.42),e*.62,.012),m.black,root);block(V(-e*.23,e*.26,.129),V(e*.17,e*.17,.006),m.white,root);
+  block(V(0,e*1.3,-.01),V(e*1.4,e*.24,.09),m.skin,root);
+ }
+ const forward=g.diet==='predator'&&!['bird','tentacled'].includes(g.type),outer=g.headSource==='mantis'?1.23:g.headSource==='ray'?1.28:1;
+ if(g.eyes==='cyclops'){eye(V(0,h.y*.4,h.z+.025),0,1.6);return}
+ if(g.eyes==='stalks'){for(const side of [-1,1]){const tip=V(side*h.x*1.15,h.y+g.size*.6,h.z*.1);tendril([V(side*h.x*.6,h.y*.8,0),tip.clone().add(V(0,-.22,0)),tip],[.09,.055,.045],m.skin,head);eye(tip,side*.18,.95)}return}
+ if(g.eyes==='ring ten'){for(let i=0;i<10;i++){const a=i/10*Math.PI*2;eye(V(Math.cos(a)*h.x*.80,Math.sin(a)*h.y*.7+.06,h.z+.026),0,.55)}return}
+ if(g.eyes==='flank rows'){for(const side of [-1,1])for(let i=0;i<4;i++)eye(V(side*(h.x*outer+.03),h.y*.4,h.z*(.8-i*.48)),side*Math.PI/2,.62);return}
+ if(g.eyes==='crown six'){for(let i=0;i<3;i++)for(const side of [-1,1])eye(V(side*h.x*(.25+i*.28),h.y*(.78-i*.28),h.z+.025),side*.06,.65);return}
+ const rows=g.eyes==='four eyes'?2:1;
+ for(let i=0;i<rows;i++)for(const side of [-1,1])eye(V(forward?side*h.x*.6:side*(h.x*outer+.025),h.y*(.62-i*.62),forward?h.z+.025:h.z*.45),forward?0:side*Math.PI/2,rows===2?.78:1);
+}
+function generate(seed,requested){
+ const g=anatomy(seed,requested);liveGenome=g;rng=seeded(seed+'|details-v4');
+ if(creature){scene.remove(creature);for(const resource of resources)resource.dispose()}
+ resources=[];animated=[];creature=new THREE.Group();scene.add(creature);
+ const [color,bellyColor,accentColor]=g.palette;
+ const skin=material('#ffffff',{map:skinTexture(color,accentColor)}),belly=material(bellyColor),accent=material(accentColor,{roughness:.65}),horn=material('#c9bca2'),black=material('#152125',{roughness:.4}),iris=material(accentColor,{roughness:.3});
+ const {L,W,H,Y,head:h}=g;
+ const mats={skin,belly,accent,horn,black,iris};
+ // Segmented families have an actual curved chain, not the quadruped torso.
+ if(g.segmented){
+  for(let i=0;i<g.segments;i++){
+   const t=i/(g.segments-1),z=-L+2*L*t,x=Math.sin(t*Math.PI*2)*W*g.bodyCurve,profile=.46+.54*Math.sin(.2+t*2.7),depth=L/g.segments*1.12;
+   const segment=block(V(x,Y,z),V(W*profile,H*profile,depth),i%3===0&&g.armored?accent:skin);segment.rotation.y=Math.atan(Math.cos(t*Math.PI*2)*W*g.bodyCurve*Math.PI/L);
+   block(V(x,Y-H*profile*.9,z),V(W*profile*.8,.065,depth*.95),belly);
+   if(g.armored)block(V(x,Y+H*profile,z),V(W*profile*1.04,.085,depth*.75),accent);
+  }
+ }else{
+  block(V(0,Y,g.main.at),V(g.main.x,g.main.y,g.main.z),skin);
+  block(V(0,Y-H*.1,g.minor.at),V(g.minor.x,g.minor.y,g.minor.z),skin);
+  block(V(0,Y-H*.78,g.main.at),V(g.main.x*.8,H*.26,g.main.z*.85),belly);
+ }
+ const plantedFeet=[];
+ // COM drives the support polygon; stance offsets vary without moving planted feet.
+ for(let pair=0;pair<g.legs/2;pair++)for(const side of [-1,1]){
+  const q=g.legs===2?.5:pair/(g.legs/2-1),z=g.legs===2?g.com:THREE.MathUtils.lerp(g.supportBack,g.supportFront,q);
+  const front=q>.5,loaded=(g.focus==='front'&&front)||(g.focus==='rear'&&!front),radius=g.radius*(loaded?1.4:.72);
+  const hipZ=g.legs===2?g.com:THREE.MathUtils.lerp(-L*.55,L*.6,q),hipX=(front?g.focus==='front':g.focus==='rear')?g.main.x:g.minor.x;
+  const bend=g.segmented?Math.sin((hipZ+L)/(2*L)*Math.PI*2)*W*g.bodyCurve:0;
+  const hip=V(bend+side*(g.segmented?W*.75:hipX*.82),Y-H*.28,hipZ),foot=V(bend+side*(hipX+g.spread),radius*.45,z+(side===g.scarSide?.10:-.10)*g.size);
+  plantedFeet.push({side,position:foot.clone()});
+  const knee=hip.clone().lerp(foot,.46),ankle=hip.clone().lerp(foot,.82);
+  if(g.gait==='spring'){knee.z+=.52*g.size;ankle.z-=.36*g.size;knee.x+=side*.13}
+  else if(g.gait==='sprawl'){knee.x+=side*W*.7;knee.y=Math.max(radius*1.4,knee.y*.65)}
+  else if(g.gait==='knuckle'){knee.z+=front?.27:-.25;knee.x+=side*.15}
+  // Pillar limbs remain stacked; mass increases cross-section rather than length.
+  if(g.gait==='pillar'){knee.x=foot.x;ankle.x=foot.x;knee.z=foot.z;ankle.z=foot.z}
+  block(hip,V(radius*1.5,radius*1.8,radius*1.5),skin);
+  tendril([hip,knee,ankle,foot],[radius*1.15,radius,radius*.68,radius*.58],skin);
+  block(knee,V(radius*1.13,radius*.9,radius*1.1),skin);
+  buildExtremity(g.foot,foot,radius,side,mats);
+ }
+ const head=new THREE.Group();head.position.set(0,g.headY,g.headZ);head.rotation.z=g.scarSide*.055;creature.add(head);
+ animated.push({node:head,kind:'head',phase:r(0,6),restX:g.diet==='detritivore'?.12:g.diet==='predator'?.06:-.07,restY:g.scarSide*.07});
+ const base=V(0,Y,L*.4),tip=head.position.clone();let neckPoints;
+ if(g.neck==='swan')neckPoints=[base,V(0,Y+g.neckLength*.5,L*.35),V(0,Y+g.neckLength*.95,L*.32),tip];
+ else if(g.neck==='serpentine')neckPoints=[base,V(W*.35,Y+g.neckLength*.3,L*.5),V(-W*.25,Y+g.neckLength*.62,L*.65),V(0,Y+g.neckLength*.85,g.headZ-.3),tip];
+ else neckPoints=[base,base.clone().lerp(tip,.5),tip];
+ tendril(neckPoints,neckPoints.map((_,i)=>g.neckRadius*(1.45-.45*i/(neckPoints.length-1))),skin);
+ block(V(0,0,0),V(h.x,h.y,h.z),skin,head);
+ if(g.headSource==='cetacean')block(V(0,h.y*.34,h.z*.35),V(h.x*.92,h.y*.82,h.z*.55),skin,head);
+ if(g.headSource==='mantis')for(const side of [-1,1]){const cheek=block(V(side*h.x*.76,-h.y*.2,0),V(h.x*.43,h.y*.65,h.z*.75),belly,head);cheek.rotation.z=side*.18}
+ if(g.headSource==='ray')for(const side of [-1,1])block(V(side*h.x*.78,-h.y*.25,h.z*.2),V(h.x*.48,h.y*.25,h.z*.8),skin,head);
+ if(g.headSource==='tapir'&&g.diet!=='predator')tendril([V(0,-h.y*.25,h.z*.9),V(0,-h.y*.65,h.z*1.6),V(0,-h.y*1.15,h.z*1.7)],[h.x*.27,h.x*.22,h.x*.18],skin,head);
+
+ // Readable face: a projecting upper jaw, a genuinely separated hinged lower jaw,
+ // dark cavity, lip rim, tongue, teeth and nostrils. Nothing buried inside the skull.
+ const mouth=material('#281920'),tongue=material('#a56770'),eyeWhite=material('#eee5cd');
+ if(g.type==='worm'){
+  const z=h.z+.06;
+  block(V(0,-h.y*.15,z),V(h.x*.68,h.y*.58,.06),mouth,head);
+  for(const side of [-1,1]){
+   block(V(side*h.x*.74,-h.y*.15,z),V(h.x*.12,h.y*.72,.15),belly,head);
+   block(V(0,-h.y*.15+side*h.y*.63,z),V(h.x*.67,h.y*.10,.15),belly,head);
+   for(let i=-1;i<=1;i++)block(V(i*h.x*.36,-h.y*.15+side*h.y*.45,z+.12),V(.045,h.y*.16,.06),horn,head);
+  }
+  block(V(0,-h.y*.55,z+.1),V(h.x*.38,.04,.06),tongue,head);
+ }else{
+ const beaked=g.headSource==='avian'||g.headSource==='cephalopod';
+ const jawWidth=h.x*(beaked?.65:.86),snout=h.z*(beaked?(g.beak==='spear'?2.0:g.beak==='scoop'?1.4:.95):g.type==='dragon'?1.25:.9);
+ const jawZ=h.z+snout*.5,upperY=-h.y*.18,gap=h.y*.48;
+ const jaw=new THREE.Group();jaw.position.set(0,-h.y*.78,h.z*.65);head.add(jaw);animated.push({node:jaw,kind:'jaw',phase:r(0,6),restX:.04});
+ const upperMat=beaked?horn:skin;
+ block(V(0,upperY,jawZ),V(jawWidth,h.y*.23,snout*.63),upperMat,head);
+ block(V(0,upperY-h.y*.23-gap*.5,jawZ),V(jawWidth*.91,gap*.5,snout*.6),mouth,head);
+ block(V(0,0,jawZ-h.z*.65),V(jawWidth*.94,h.y*.16,snout*.63),beaked?horn:belly,jaw);
+ block(V(0,h.y*.18,jawZ-h.z*.65+snout*.1),V(jawWidth*.48,.035,snout*.42),tongue,jaw);
+ if(beaked){
+  const tipZ=jawZ+snout*.7,hook=g.beak==='hook'||g.headSource==='cephalopod';
+  block(V(0,upperY-(hook?h.y*.24:0),tipZ),V(jawWidth*(g.beak==='scoop'?.88:.46),h.y*(hook?.42:.16),snout*.24),horn,head);
+  if(g.beak==='spear')block(V(0,upperY,tipZ+snout*.3),V(jawWidth*.2,h.y*.10,snout*.26),horn,head);
+ }else if(g.diet==='predator'){
+  for(const side of [-1,1])for(let i=0;i<4;i++){
+   const z=h.z+snout*(.12+i*.34),tooth=h.y*(i===0?.38:.22);
+   block(V(side*jawWidth*.85,upperY-h.y*.23-tooth*.45,z),V(.045,tooth*.5,.055),horn,head);
+   block(V(side*jawWidth*.8,h.y*.27,z-h.z*.65),V(.04,h.y*.13,.055),horn,jaw);
+  }
+ }else for(let i=0;i<3;i++)block(V(0,h.y*.2,jawZ-h.z*.65+(i-1)*snout*.28),V(jawWidth*.77,.035,.055),horn,jaw);
+ for(const side of [-1,1]){
+  block(V(side*h.x*.82,-h.y*.28,h.z*.57),V(h.x*.25,h.y*.5,h.z*.43),skin,head);
+  block(V(side*jawWidth*.45,upperY+h.y*.24,jawZ+snout*.28),V(.055,.02,.085),black,head);
+ }
+ if(g.diet==='detritivore')for(const side of [-1,1])tendril([V(side*jawWidth,-h.y*.65,jawZ),V(side*jawWidth*1.3,-h.y*1.5,jawZ+.3),V(side*jawWidth*1.5,-h.y*1.7,jawZ+.5)],[.055,.035,.016],belly,head);
+ }
+ mats.white=eyeWhite;buildEyes(g,mats,head);buildTail(g,mats);buildTusks(g,mats,head);
+ // Secondary budget: one defense structure, one physiological system. No blanket spikes.
+ if(g.defense==='carapace'){for(let i=0;i<3;i++)block(V(0,Y+g.main.y+.06,g.main.at+(i-1)*g.main.z*.62),V(g.main.x*1.04,.16*g.size,g.main.z*.31),accent)}
+ if(g.defense==='crusher')for(const side of [-1,1]){const heavy=side===g.scarSide,f=heavy?1.0:.5,root=V(side*W*.9,Y-H*.25,L*.5),tip=V(side*(W+.55*g.size),Math.max(.35,Y-H*.4),L+1.0*g.size);tendril([root,root.clone().lerp(tip,.6).add(V(side*.3,0,0)),tip],[.20*f,.18*f,.16*f],skin);block(tip,V(.36*f,.28*f,.5*f),accent);for(const fork of [-1,1])block(tip.clone().add(V(fork*.22*f,0,.56*f)),V(.09*f,.18*f,.28*f),horn)}
+ if(g.thermal==='cooling sail'){for(let i=0;i<4;i++){const z=g.main.at+(i-1.5)*g.main.z*.4,tall=(1-Math.abs(i-1.5)*.22)*g.size;block(V(0,Y+g.main.y+tall*.5,z),V(.065,tall*.5,g.main.z*.22),accent)}}
+ if(g.thermal==='throat sac'&&!['mantis','leviathan'].includes(g.type))block(V(0,g.headY-h.y*.9,g.headZ-h.z*.35),V(h.x*.63,h.y*.85,h.z*.48),accent);
+ if(g.thermal==='rib spiracles')for(const side of [-1,1])for(let i=0;i<3;i++)block(V(side*(g.main.x+.012),Y+H*.1,g.main.at+(i-1)*g.main.z*.42),V(.025,H*.18,g.main.z*.065),black);
+ if(g.thermal==='insulating mantle')block(V(0,Y+g.main.y*.9,g.main.at),V(g.main.x*1.05,.20*g.size,g.main.z*.83),belly);
+ if(g.thermal==='air sacs'){block(V(0,Y+H*.7,g.main.at),V(g.main.x*.88,H*.8,g.main.z*.87),belly);for(let i=0;i<6;i++){const a=i/6*Math.PI*2,node=new THREE.Group();node.position.set(Math.cos(a)*W*.7,Y-H*.8,Math.sin(a)*L*.6);creature.add(node);animated.push({node,kind:'tentacle',phase:a});tendril([V(0,0,0),V(Math.cos(a)*.12,-.7,0),V(Math.cos(a)*.3,-1.4,.25)],[.07,.055,.02],skin,node)}}
+ buildWings(g,mats);
+ if(g.type==='bird')for(let i=0;i<3;i++){const crest=block(V(0,h.y+.15+i*.06,-h.z*.3+i*.16),V(.08,.26-i*.04,.09),accent,head);crest.rotation.x=-.3}
+ if(g.type==='dragon'||g.horns==='antlers'){
+  const sides=g.horns==='single'?[0]:[-1,1];
+  if(g.horns!=='none')for(const side of sides){
+   const root=V(side*h.x*.7,h.y*.8,-h.z*.3),high=g.horns==='crown'?1.1:.65;
+   const end=root.clone().add(V(side*.35,high,-.65));
+   tendril([root,root.clone().lerp(end,.55),end],[.15,.10,.015],horn,head);
+   if(g.horns==='antlers')for(let i=1;i<=3;i++){const p=root.clone().lerp(end,i/4);tendril([p,p.clone().add(V(side*.35,.2,.15))],[.075,.018],horn,head)}
+  }
+  for(let i=0;i<4;i++)block(V(0,Y+H+.12,L*.5-i*L*.4),V(.085,.18,.15),accent);
+ }
+ // Optional upper limbs are independent of locomotor leg count.
+ for(let pair=0;pair<g.armPairs;pair++)for(const side of [-1,1]){
+  const shoulder=V(side*g.main.x*.85,Y+H*.35-pair*.3,L*.55),elbow=V(side*(W+.45),Y+.05-pair*.25,L+.25),wrist=V(side*(W+.35),Y-H*.5-pair*.2,L+.55);
+  tendril([shoulder,elbow,wrist],[.16,.13,.10],skin);
+  buildExtremity(g.foot==='hooves'?'hands':g.foot,wrist,.13*g.size,side,mats);
+ }
+ if(g.type==='tentacled'){
+  // Mantle above a clear face, with arms emerging below rather than covering eyes.
+  block(V(0,Y+H*.55,-L*.12),V(W*.94,H*.9,L*.65),skin);
+  const siphon=block(V(g.scarSide*W*.8,Y+H*.2,L*.5),V(.17,.17,.34),belly);siphon.rotation.y=g.scarSide*.3;
+  block(V(g.scarSide*W*.8,Y+H*.2,L*.5+.35),V(.11,.11,.025),black);
+  for(let i=0;i<g.armCount;i++){
+   const angle=i/g.armCount*Math.PI*2,dx=Math.cos(angle),dz=Math.sin(angle),arm=new THREE.Group();arm.position.set(dx*W*.7,Y-H*.75,dz*L*.6);creature.add(arm);animated.push({node:arm,kind:'tentacle',phase:angle});
+   const reach=g.size*(g.tentacleStyle==='ribbon'?2.7:i%3===0?2.25:1.65),drop=Y-H*.75-.12;
+   const points=[V(0,0,0),V(dx*reach*.28,-drop*.55,dz*reach*.28),V(dx*reach*.64,-drop,dz*reach*.64),V(dx*reach,-drop+.10,dz*reach),V(dx*reach*1.08,-drop+.45,dz*reach*1.08)];
+   tendril(points,[.19*g.size,.16*g.size,.115*g.size,.07,.018],skin,arm);
+   if(g.tentacleStyle==='grasping')buildExtremity('hands',points.at(-1),.10*g.size,dx>0?1:-1,mats,arm);
+   if(g.tentacleStyle==='ribbon')for(let j=1;j<points.length;j++){const p=points[j-1].clone().lerp(points[j],.5),segment=block(p,V(.22*g.size,.05,points[j].distanceTo(points[j-1])*.5),accent,arm);segment.quaternion.setFromUnitVectors(V(0,0,1),points[j].clone().sub(points[j-1]).normalize())}
+   if(g.tentacleStyle==='barbed')for(let j=1;j<points.length-1;j++)tendril([points[j],points[j].clone().add(V(dx*.2,.28,dz*.2))],[.065,.009],horn,arm);
+   if(g.tentacleStyle==='suckered')for(let j=1;j<=5;j++){const t=j/6,seg=t*3,k=Math.floor(seg),p=points[k].clone().lerp(points[k+1],seg-k);block(p.add(V(0,.14*g.size,0)),V(.07,.035,.075),belly,arm)}
+  }
+ }
+ if(g.type==='mantis')for(const side of [-1,1]){
+  const shoulder=V(side*W*.82,Y+H*.25,L*.55),elbow=V(side*(W+.65),Y+H*.45,L+ .55),wrist=V(side*(W+.55),Y-H*.1,L+.95),tip=V(side*(W+.25),Y+.05,L+.45);
+  tendril([shoulder,elbow,wrist,tip],[.16,.15,.11,.025],skin);
+  for(let i=0;i<4;i++){const p=elbow.clone().lerp(wrist,(i+.5)/4);block(p.add(V(-side*.12,0,0)),V(.1,.045,.045),horn)}
+  tendril([V(side*h.x*.5,h.y,0),V(side*h.x*.85,h.y+.45,.2),V(side*h.x*1.1,h.y+.65,.6)],[.04,.03,.009],accent,head);
+ }
+ if(g.type==='leviathan'){
+  for(const side of [-1,1])for(let i=0;i<4;i++)block(V(side*(g.main.x+.02),Y+H*.15-i*.12,g.main.at+L*.2),V(.025,.028,L*.32),belly);
+  block(V(0,Y+g.main.y+.03,g.main.at),V(.22,.025,.12),black);
+ }
+
+ // Restricted, one-sided wear: a few pale scars on the focal flank.
+ for(let i=0;i<3;i++)block(V(g.scarSide*(g.main.x+.014),Y+g.main.y*.25+i*.1,g.main.at+.1*i),V(.015,.025,g.main.z*.17),belly);
+ creature.updateMatrixWorld(true);const bounds=new THREE.Box3().setFromObject(creature),size=bounds.getSize(V(0,0,0)),center=bounds.getCenter(V(0,0,0)),scale=Math.min(1.25,7.3/Math.max(size.x,size.z),5.6/size.y);
+ creature.scale.setScalar(scale);creature.position.set(-center.x*scale,-bounds.min.y*scale+(g.gait==='float'?.20:.035),-center.z*scale);creature.userData.baseY=creature.position.y;creature.userData.floating=g.gait==='float';controls.target.set(0,size.y*scale*.47,0);
+ const starts=['Auro','Velu','Mora','Cyra','Ophi','Talo','Nemi','Ixo','Quora','Eru'],ends=['ptera','don','lisk','mora','vex','nath','pod','syl','rion'];
+ $('name').textContent=pick(starts)+pick(ends);$('type').textContent=g.type+' / '+g.variant;$('habitat').textContent=g.habitat;$('temper').textContent=g.diet;$('limbs').textContent=g.legs?g.legs+' weight-bearing':g.type==='tentacled'?g.armCount+' grasping arms':g.segmented?'segmented body':'buoyant';
+ $('description').textContent=`${g.focus==='central'?'Elongated':g.focus==='front'?'Shoulder-dominant':'Abdomen-dominant'} ${g.diet} with a ${g.headSource}-derived skull and ${g.signature}. ${g.tusks!=='none'?g.tusks+' tusks. ':''}${g.armPairs?g.armPairs*2+' additional grasping limbs.':''}`;
+ $('balance').textContent=g.neck+' neck';$('mass').textContent=Math.round(g.mass*14)+' kg (design)';
+ $('swatches').replaceChildren(...g.palette.map(c=>{const el=document.createElement('span');el.style.background=c;return el}));
+ remember(g);$('serial').textContent='GENOME / '+seed+' · '+archive.length+' RECENT GENOMES';location.hash=new URLSearchParams({seed,plan:requested}).toString();$('status').hidden=true;setSilhouette();
+}
+function grow(){const seed=$('seed').value.trim()||'first-contact';$('seed').value=seed;generate(seed,$('plan').value)}
+function random(){
+ const entropy=new Uint32Array(2);crypto.getRandomValues(entropy);const prefix=entropy[0].toString(36)+'-'+entropy[1].toString(36),requested=$('plan').value;
+ let best,score=-Infinity;
+ // Genomes only: bounded novelty search never builds discarded meshes.
+ for(let i=0;i<36;i++){const seed=prefix+'-'+i.toString(36),g=anatomy(seed,requested),distance=novelty(g),fresh=!archive.some(a=>a.niche===g.niche),value=distance+(fresh?.3:0)+(requested==='any' && g.type!==liveGenome?.type ? .12 : 0);if(value>score){score=value;best=seed}if(fresh&&distance>.17&&(requested!=='any'||g.type!==liveGenome?.type)){best=seed;break}}
+ $('seed').value=best;grow();
+}
+$('silhouette').onclick=()=>{silhouette=!silhouette;setSilhouette()};$('grow').onclick=grow;$('random').onclick=random;$('plan').onchange=grow;$('seed').onkeydown=e=>{if(e.key==='Enter')grow()};$('spin').onclick=()=>{controls.autoRotate=!controls.autoRotate;$('spin').textContent='Auto orbit · '+(controls.autoRotate?'on':'off');$('spin').setAttribute('aria-pressed',String(controls.autoRotate))};addEventListener('keydown',e=>{if(e.code==='Space'&&!['INPUT','SELECT','BUTTON'].includes(document.activeElement.tagName)){e.preventDefault();random()}});
+const hash=new URLSearchParams(location.hash.slice(1));$('seed').value=hash.get('seed')||'ember-crown';if(['any',...Object.keys(plans)].includes(hash.get('plan')))$('plan').value=hash.get('plan');else if(!hash.has('seed'))$('plan').value='dragon';grow();
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+const clock=new THREE.Clock();let elapsed=0;renderer.setAnimationLoop(()=>{const dt=Math.min(clock.getDelta(),.05);elapsed+=dt;for(const a of animated){const t=elapsed+a.phase;if(a.kind==='head'){a.node.rotation.y=(a.restY||0)+Math.sin(t*.65)*.035;a.node.rotation.x=(a.restX||0)+Math.sin(t*.8)*.025}else if(a.kind==='jaw')a.node.rotation.x=(a.restX||0)+(.5+.5*Math.sin(t*.55))*.055;else if(a.kind==='tail')a.node.rotation.y=Math.sin(t*.9)*(a.amplitude||.07);else if(a.kind==='wing')a.node.rotation.z=(a.rest||0)+a.sign*Math.sin(t*.8)*.035;else a.node.rotation.z=Math.sin(t)*.035}if(creature?.userData.floating)creature.position.y=creature.userData.baseY+Math.sin(elapsed*.9)*.09;controls.update(dt);renderer.render(scene,camera)});
+} catch(error){console.error(error);document.getElementById('status').textContent='Could not start the 3D lab. Check WebGL support and internet access for Three.js, then reload. '+error.message;}
+</script></body></html>
